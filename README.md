@@ -2,27 +2,28 @@
 
 # PAM WhatsApp Web
 
-### A experiência do `whatsapp-web.js`, agora em PHP puro e persistente.
+### The `whatsapp-web.js` experience, now in persistent, pure PHP.
 
 [![PHP 8.5+](https://img.shields.io/badge/PHP-8.5%2B-777BB4?logo=php&logoColor=white)](https://github.com/push-in/pam)
 [![PAM Runtime](https://img.shields.io/badge/runtime-PAM-20C997)](https://github.com/push-in/pam)
 [![Packagist](https://img.shields.io/packagist/v/pushinbr/pam-whatsapp-web?color=25c2a0)](https://packagist.org/packages/pushinbr/pam-whatsapp-web)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-**QR no terminal · sessão persistente · eventos em tempo real · mídia · grupos · canais · chamadas**
+**Terminal QR · persistent sessions · real-time events · media · groups · channels · calls**
 
-[Começar agora](#start-here) · [Recursos](#o-que-já-vem-pronto) · [Compatibilidade](#compatibilidade) · [Segurança](#uso-responsável)
+[Start here](#start-here) · [Features](#whats-included) · [Compatibility](#compatibility) · [Safety](#responsible-use)
 
 </div>
 
-Uma API tipada para controlar o WhatsApp Web diretamente do PHP. O PAM mantém o
-processo vivo, o `pam-browser` conversa com Chrome/Chromium por Chrome DevTools
-Protocol e esta biblioteca entrega a superfície familiar do `whatsapp-web.js` —
-sem Node.js, npm, Puppeteer ou Playwright em produção.
+A typed API for controlling WhatsApp Web directly from PHP. PAM keeps the
+process alive, `pam-browser` communicates with Chrome/Chromium through the
+Chrome DevTools Protocol, and this library provides the familiar
+`whatsapp-web.js` surface — without Node.js, npm, Puppeteer, or Playwright in
+production.
 
 ## Start here
 
-### 1. Instale o PAM
+### 1. Install PAM
 
 ```bash
 curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
@@ -32,18 +33,18 @@ curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
 pam doctor
 ```
 
-### 2. Crie seu projeto e instale a biblioteca
+### 2. Create your project and install the library
 
 ```bash
-mkdir meu-whatsapp && cd meu-whatsapp
+mkdir my-whatsapp && cd my-whatsapp
 pam composer init --no-interaction
 pam composer require pushinbr/pam-whatsapp-web:^1.0
 ```
 
-O host precisa ter Chrome ou Chromium instalado. Nenhum runtime JavaScript é
-necessário.
+Chrome or Chromium must be installed on the host. No JavaScript runtime is
+required.
 
-### 3. Crie `listen.php`
+### 3. Create `listen.php`
 
 ```php
 <?php
@@ -78,13 +79,12 @@ $client->onQrCode(static function (QrCodeReceived $event): void {
         'textLineStart' => '  ',
     ]));
 
-    echo "\033[2J\033[H";
-    echo "Abra o WhatsApp > Aparelhos conectados > Conectar aparelho\n\n";
+    echo "\n\nOpen WhatsApp > Linked devices > Link a device\n\n";
     echo $qr->render($event->code), "\n";
 });
 
 $client->onReady(static function (Ready $event): void {
-    echo "\033[2J\033[H✓ WhatsApp conectado. Aguardando mensagens...\n";
+    echo "\n\n✓ WhatsApp connected. Waiting for messages...\n";
 });
 
 $client->onMessage(static function (MessageReceived $event): void {
@@ -98,32 +98,32 @@ $client->initialize();
 $client->run();
 ```
 
-### 4. Rode
+### 4. Run it
 
 ```bash
 pam listen.php
 ```
 
-Na primeira execução, um QR escaneável aparece no terminal. Depois do scan, o
-cliente conecta sozinho e começa a imprimir mensagens recebidas. A autenticação
-fica em `.sessions/`; nas próximas execuções, a conexão é restaurada sem outro
-QR. Não publique essa pasta e não compartilhe seu conteúdo.
+On the first run, a scannable QR code appears in the terminal. After scanning,
+the client connects automatically and starts printing inbound messages.
+Authentication is stored in `.sessions/`; subsequent runs restore the session
+without another QR code. Never publish this directory or share its contents.
 
-> O mesmo programa pronto está em [`examples/listen.php`](examples/listen.php).
+> The complete runnable program is available at [`examples/listen.php`](examples/listen.php).
 
-## O que já vem pronto
+## What's included
 
-| Área | Recursos |
+| Area | Features |
 |---|---|
-| Sessão | QR, código de pareamento, `LocalAuth`, `RemoteAuth`, reconexão e conflito de sessão |
-| Mensagens | texto, resposta, edição, exclusão, encaminhamento, reações, menções e confirmação de leitura |
-| Mídia | imagem, áudio, vídeo, documento, sticker, thumbnail e download em streaming |
-| Conversas | contatos, chats privados, grupos, participantes, convites, comunidades e solicitações de entrada |
-| Conteúdo | localização, enquete, contato, lista de contatos, botões, listas e eventos agendados |
-| WhatsApp | presença, estado da conexão, chamadas, canais, labels, perfil comercial, produtos e pedidos |
-| API | objetos tipados, enums inteiros, eventos imutáveis, PHPStan nível 9 e matriz automática de paridade |
+| Session | QR, pairing code, `LocalAuth`, `RemoteAuth`, reconnection, and session conflict handling |
+| Messages | text, replies, editing, deletion, forwarding, reactions, mentions, and read receipts |
+| Media | images, audio, video, documents, stickers, thumbnails, and streaming downloads |
+| Conversations | contacts, private chats, groups, participants, invites, communities, and membership requests |
+| Content | locations, polls, contacts, contact lists, buttons, list messages, and scheduled events |
+| WhatsApp | presence, connection state, calls, channels, labels, business profiles, products, and orders |
+| API | typed objects, integer-backed enums, immutable events, PHPStan level 9, and an automated parity matrix |
 
-### Responder a uma mensagem
+### Reply to a message
 
 ```php
 $client->onMessage(static function (MessageReceived $event): void {
@@ -133,17 +133,17 @@ $client->onMessage(static function (MessageReceived $event): void {
 });
 ```
 
-### Enviar mensagens e operar chats
+### Send messages and manage chats
 
 ```php
-$client->sendMessage('5511999999999@c.us', 'Olá direto do PHP!');
+$client->sendMessage('15551234567@c.us', 'Hello directly from PHP!');
 $client->sendPresenceAvailable();
 $client->archiveChat($chatId);
 $client->muteChat($chatId, new DateTimeImmutable('+1 hour'));
 $contact = $client->getNumberId('5511999999999');
 ```
 
-### Baixar mídia grande sem estourar memória
+### Download large media without exhausting memory
 
 ```php
 use Pam\WhatsApp\MediaStreamOptions;
@@ -154,17 +154,17 @@ $media = $message->downloadMediaStream(new MediaStreamOptions(
 
 if ($media !== null) {
     foreach ($media->stream as $chunk) {
-        // Grave ou encaminhe cada chunk binário.
+        // Persist or forward each binary chunk.
     }
 }
 ```
 
-## Compatibilidade
+## Compatibility
 
-A versão `1.0` acompanha o `whatsapp-web.js` `1.34.7` e o commit de referência
-`942d236a11ad68807308b058303ba5256915979c`. A cobertura é auditável em
-[`api-matrix.json`](api-matrix.json): **81 símbolos + 670 membros, 751/751
-contratos estritos**.
+Version `1.0` tracks `whatsapp-web.js` `1.34.7` at reference commit
+`942d236a11ad68807308b058303ba5256915979c`. Coverage is auditable in
+[`api-matrix.json`](api-matrix.json): **81 symbols + 670 members, 751/751 strict
+contracts**.
 
 ```bash
 pam composer parity:gate
@@ -172,13 +172,14 @@ pam composer test
 pam composer analyse
 ```
 
-A certificação ao vivo é separada entre smoke de QR e suíte autenticada com
-proteções explícitas para mutações. Veja [`CERTIFICATION.md`](CERTIFICATION.md).
+Live certification is split between an unauthenticated QR smoke test and an
+authenticated suite with explicit mutation guards. See
+[`CERTIFICATION.md`](CERTIFICATION.md).
 
-## Arquitetura
+## Architecture
 
 ```text
-seu código PHP
+your PHP code
       │
       ▼
 PAM WhatsApp Web ── eventos e objetos tipados
@@ -190,14 +191,14 @@ PAM Browser ─────── Chrome DevTools Protocol
 Chrome / Chromium ─ WhatsApp Web
 ```
 
-## Uso responsável
+## Responsible use
 
-Esta é uma biblioteca comunitária e não oficial. O WhatsApp pode alterar seus
-módulos internos sem aviso e pode limitar ou bloquear contas que violem seus
-termos. Evite spam e automação abusiva. Para integrações oficialmente suportadas
-e workloads críticos, use a WhatsApp Business Platform da Meta.
+This is an unofficial, community-maintained library. WhatsApp may change its
+internal modules without notice and may restrict or block accounts that violate
+its terms. Avoid spam and abusive automation. For officially supported
+integrations and critical workloads, use Meta's WhatsApp Business Platform.
 
-## Licença
+## License
 
-Código aberto sob a [Apache License 2.0](LICENSE). Pode usar, modificar e
-distribuir, inclusive comercialmente.
+Open source under the [Apache License 2.0](LICENSE). You may use, modify, and
+distribute it, including commercially.

@@ -2,6 +2,13 @@
 
 All notable changes to PAM WhatsApp Web will be documented here.
 
+## 1.0.1 - 2026-08-25
+
+- Translate the complete public documentation and terminal listener example to
+  English.
+- Simplify terminal output by using ordinary line breaks instead of screen
+  clearing control sequences.
+
 ## 1.0.0 - 2026-08-25
 
 - Add a pure PHP 8.5+ WhatsApp Web client running on PAM without Node.js,

@@ -31,14 +31,12 @@ $client->onQrCode(static function (QrCodeReceived $event): void {
         'textLineStart' => '  ',
     ]);
 
-    echo "\033[2J\033[H";
-    echo "Abra o WhatsApp > Aparelhos conectados > Conectar aparelho\n\n";
+    echo "\n\nOpen WhatsApp > Linked devices > Link a device\n\n";
     echo (new QRCode($options))->render($event->code), "\n";
 });
 
 $client->onReady(static function (Ready $event): void {
-    echo "\033[2J\033[H";
-    echo "✓ WhatsApp conectado. Aguardando mensagens...\n";
+    echo "\n\n✓ WhatsApp connected. Waiting for messages...\n";
 });
 
 $client->onMessage(static function (MessageReceived $event): void {
