@@ -2,6 +2,13 @@
 
 All notable changes to PAM WhatsApp Web will be documented here.
 
+## 1.0.2 - 2026-08-25
+
+- Add `TerminalQrCode`, a compact half-block renderer that cuts terminal QR
+  output to roughly half the previous width and height.
+- Simplify the quick-start example to one QR rendering call with no visible
+  ANSI escape sequences.
+
 ## 1.0.1 - 2026-08-25
 
 - Translate the complete public documentation and terminal listener example to

@@ -4,9 +4,6 @@ declare(strict_types=1);
 
 require dirname(__DIR__).'/vendor/autoload.php';
 
-use chillerlan\QRCode\Output\QRStringText;
-use chillerlan\QRCode\QRCode;
-use chillerlan\QRCode\QROptions;
 use Pam\WhatsApp\Auth\LocalAuth;
 use Pam\WhatsApp\Auth\LocalAuthOptions;
 use Pam\WhatsApp\Client;
@@ -14,6 +11,7 @@ use Pam\WhatsApp\ClientOptions;
 use Pam\WhatsApp\Event\MessageReceived;
 use Pam\WhatsApp\Event\QrCodeReceived;
 use Pam\WhatsApp\Event\Ready;
+use Pam\WhatsApp\TerminalQrCode;
 
 $client = new Client(new ClientOptions(
     authStrategy: new LocalAuth(new LocalAuthOptions(
@@ -23,16 +21,8 @@ $client = new Client(new ClientOptions(
 ));
 
 $client->onQrCode(static function (QrCodeReceived $event): void {
-    $options = new QROptions([
-        'outputInterface' => QRStringText::class,
-        'eol' => "\n",
-        'textDark' => "\033[40m  \033[0m",
-        'textLight' => "\033[47m  \033[0m",
-        'textLineStart' => '  ',
-    ]);
-
     echo "\n\nOpen WhatsApp > Linked devices > Link a device\n\n";
-    echo (new QRCode($options))->render($event->code), "\n";
+    echo TerminalQrCode::render($event->code), "\n";
 });
 
 $client->onReady(static function (Ready $event): void {
