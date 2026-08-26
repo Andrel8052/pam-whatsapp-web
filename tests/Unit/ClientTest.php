@@ -270,6 +270,28 @@ final class ClientTest extends TestCase
         self::assertSame('me@c.us', $diagnostics->accountId);
     }
 
+    public function testVideoHelperUsesTheTypedMediaPipeline(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'pam-video-');
+        self::assertIsString($path);
+        $videoPath = $path.'.mp4';
+        self::assertTrue(rename($path, $videoPath));
+        file_put_contents($videoPath, 'video');
+
+        try {
+            $session = new ClientFakeSession();
+            $client = Client::forSession($session);
+            $client->initialize();
+            $client->sendVideoToNumber('+55 11 99999-9999', $videoPath, 'Demo', asGif: true);
+
+            self::assertSame('video/mp4', $session->lastContent['media']['mimetype'] ?? null);
+            self::assertTrue($session->lastOptions['sendVideoAsGif'] ?? false);
+            self::assertSame('Demo', $session->lastOptions['caption'] ?? null);
+        } finally {
+            @unlink($videoPath);
+        }
+    }
+
     public function testItLogsOutAndClosesTheClientState(): void
     {
         $session = new ClientFakeSession();

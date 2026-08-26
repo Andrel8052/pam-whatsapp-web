@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "upstream": {
+    "repository": "wwebjs/whatsapp-web.js",
+    "version": "1.34.7",
+    "commit": "942d236a11ad68807308b058303ba5256915979c"
+  },
+  "statuses": {
+    "1": "Supported",
+    "2": "Deprecated upstream",
+    "3": "Planned upstream"
+  },
+  "features": [
+    {"id":"multi-device","name":"Multi Device","status":1,"apis":["Pam\\WhatsApp\\Client::initialize"]},
+    {"id":"send-messages","name":"Send messages","status":1,"apis":["Pam\\WhatsApp\\Client::sendMessage","Pam\\WhatsApp\\Client::sendMessageToNumber"]},
+    {"id":"receive-messages","name":"Receive messages","status":1,"apis":["Pam\\WhatsApp\\Client::onMessage"]},
+    {"id":"send-media-image-audio-document","name":"Send media (images/audio/documents)","status":1,"apis":["Pam\\WhatsApp\\Client::sendImageToNumber","Pam\\WhatsApp\\Client::sendAudioToNumber","Pam\\WhatsApp\\Client::sendDocumentToNumber"]},
+    {"id":"send-media-video","name":"Send media (video)","status":1,"apis":["Pam\\WhatsApp\\Client::sendVideoToNumber"]},
+    {"id":"send-stickers","name":"Send stickers","status":1,"apis":["Pam\\WhatsApp\\Client::sendStickerToNumber"]},
+    {"id":"receive-media","name":"Receive media (images/audio/video/documents)","status":1,"apis":["Pam\\WhatsApp\\Message::downloadMedia","Pam\\WhatsApp\\Message::downloadMediaStream"]},
+    {"id":"send-contact-cards","name":"Send contact cards","status":1,"apis":["Pam\\WhatsApp\\ContactList","Pam\\WhatsApp\\Client::sendMessage"]},
+    {"id":"send-location","name":"Send location","status":1,"apis":["Pam\\WhatsApp\\Location","Pam\\WhatsApp\\Client::sendMessage"]},
+    {"id":"send-buttons","name":"Send buttons","status":2,"apis":["Pam\\WhatsApp\\Buttons"]},
+    {"id":"send-lists","name":"Send lists","status":2,"apis":["Pam\\WhatsApp\\ListMessage"]},
+    {"id":"receive-location","name":"Receive location","status":1,"apis":["Pam\\WhatsApp\\Message"]},
+    {"id":"message-replies","name":"Message replies","status":1,"apis":["Pam\\WhatsApp\\Message::reply"]},
+    {"id":"join-groups-by-invite","name":"Join groups by invite","status":1,"apis":["Pam\\WhatsApp\\Client::acceptInvite"]},
+    {"id":"get-group-invite","name":"Get invite for group","status":1,"apis":["Pam\\WhatsApp\\GroupChat::getInviteCode"]},
+    {"id":"modify-group-info","name":"Modify group info (subject, description)","status":1,"apis":["Pam\\WhatsApp\\GroupChat::setSubject","Pam\\WhatsApp\\GroupChat::setDescription"]},
+    {"id":"modify-group-settings","name":"Modify group settings (send messages, edit info)","status":1,"apis":["Pam\\WhatsApp\\GroupChat::setMessagesAdminsOnly","Pam\\WhatsApp\\GroupChat::setInfoAdminsOnly"]},
+    {"id":"add-group-participants","name":"Add group participants","status":1,"apis":["Pam\\WhatsApp\\GroupChat::addParticipants"]},
+    {"id":"kick-group-participants","name":"Kick group participants","status":1,"apis":["Pam\\WhatsApp\\GroupChat::removeParticipants"]},
+    {"id":"promote-demote-participants","name":"Promote/demote group participants","status":1,"apis":["Pam\\WhatsApp\\GroupChat::promoteParticipants","Pam\\WhatsApp\\GroupChat::demoteParticipants"]},
+    {"id":"mention-users","name":"Mention users","status":1,"apis":["Pam\\WhatsApp\\MessageSendOptions"]},
+    {"id":"mention-groups","name":"Mention groups","status":1,"apis":["Pam\\WhatsApp\\GroupMentionSend","Pam\\WhatsApp\\MessageSendOptions"]},
+    {"id":"mute-unmute-chats","name":"Mute/unmute chats","status":1,"apis":["Pam\\WhatsApp\\Chat::mute","Pam\\WhatsApp\\Chat::unmute"]},
+    {"id":"block-unblock-contacts","name":"Block/unblock contacts","status":1,"apis":["Pam\\WhatsApp\\Contact::block","Pam\\WhatsApp\\Contact::unblock"]},
+    {"id":"get-contact-info","name":"Get contact info","status":1,"apis":["Pam\\WhatsApp\\Client::getContactById"]},
+    {"id":"get-profile-pictures","name":"Get profile pictures","status":1,"apis":["Pam\\WhatsApp\\Client::getProfilePicUrl"]},
+    {"id":"set-user-status","name":"Set user status message","status":1,"apis":["Pam\\WhatsApp\\Client::setStatus"]},
+    {"id":"react-to-messages","name":"React to messages","status":1,"apis":["Pam\\WhatsApp\\Message::react"]},
+    {"id":"create-polls","name":"Create polls","status":1,"apis":["Pam\\WhatsApp\\Poll","Pam\\WhatsApp\\Client::sendMessage"]},
+    {"id":"channels","name":"Channels","status":1,"apis":["Pam\\WhatsApp\\Client::getChannels","Pam\\WhatsApp\\Client::createChannel","Pam\\WhatsApp\\Channel"]},
+    {"id":"vote-in-polls","name":"Vote in polls","status":1,"apis":["Pam\\WhatsApp\\Message::vote"]},
+    {"id":"communities","name":"Communities","status":3,"apis":[]}
+  ]
+}

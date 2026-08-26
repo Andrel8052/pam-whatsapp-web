@@ -2,6 +2,17 @@
 
 All notable changes to PAM WhatsApp Web will be documented here.
 
+## 1.2.0 - 2026-08-26
+
+- Add a complete README cookbook with a working PHP example for every row in
+  the upstream Supported features table.
+- Add `supported-features.json` and a release gate that maps all 32 upstream
+  rows to real PHP APIs and documentation examples.
+- Add the `sendVideoToNumber()` convenience helper, including GIF-style video
+  sending through typed options.
+- Preserve truthful upstream statuses for deprecated Buttons/Lists and planned
+  Communities support.
+
 ## 1.1.0 - 2026-08-26
 
 - Add normalized unsaved-contact delivery through `sendMessageToNumber()`.

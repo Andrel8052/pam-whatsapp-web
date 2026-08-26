@@ -270,6 +270,19 @@ final class Client
         );
     }
 
+    public function sendVideoToNumber(
+        string $phoneNumber,
+        string $filePath,
+        ?string $caption = null,
+        bool $asGif = false,
+    ): Message {
+        return $this->sendMessageToNumber(
+            $phoneNumber,
+            MessageMedia::fromFilePath($filePath),
+            new MessageSendOptions(sendVideoAsGif: $asGif, caption: $caption),
+        );
+    }
+
     public function sendDocumentToNumber(string $phoneNumber, string $filePath, ?string $caption = null): Message
     {
         return $this->sendMessageToNumber(
