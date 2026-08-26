@@ -1,0 +1,11 @@
+PAM WhatsApp Web
+Copyright 2026 Push-in
+
+The JavaScript bridge includes a pinned, integrity-checked copy of the
+whatsapp-web.js 1.34.7 injected Utils.js module and contains behavior adapted
+from the same project,
+Copyright 2019 Pedro S Lopez and contributors, licensed under Apache-2.0:
+https://github.com/wwebjs/whatsapp-web.js/tree/942d236a11ad68807308b058303ba5256915979c
+
+PAM WhatsApp Web is not affiliated with, authorized by, maintained by,
+sponsored by, or endorsed by WhatsApp LLC or Meta Platforms, Inc.

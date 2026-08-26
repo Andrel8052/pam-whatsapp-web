@@ -1,0 +1,35 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+const SOURCE_URL = 'https://raw.githubusercontent.com/wwebjs/whatsapp-web.js/942d236a11ad68807308b058303ba5256915979c/src/util/Injected/Utils.js';
+const SOURCE_SHA256 = '92aab2d93fad171d4c3e596b6cfa760b3ecfd05daeaf56e18ef490a582b8411f';
+const TARGET = __DIR__.'/../resources/upstream/Utils.js';
+
+$context = stream_context_create(['http' => ['timeout' => 30.0]]);
+$source = @file_get_contents(SOURCE_URL, false, $context);
+if (!is_string($source)) {
+    fwrite(STDERR, "sync-upstream-bridge: unable to download pinned Utils.js\n");
+    exit(1);
+}
+if (!hash_equals(SOURCE_SHA256, hash('sha256', $source))) {
+    fwrite(STDERR, "sync-upstream-bridge: pinned Utils.js digest changed\n");
+    exit(1);
+}
+
+$directory = dirname(TARGET);
+if (!is_dir($directory) && !mkdir($directory, 0755, true)) {
+    fwrite(STDERR, "sync-upstream-bridge: unable to create target directory\n");
+    exit(1);
+}
+$temporary = TARGET.'.tmp.'.bin2hex(random_bytes(6));
+if (file_put_contents($temporary, $source, LOCK_EX) !== strlen($source)
+    || !rename($temporary, TARGET)
+) {
+    @unlink($temporary);
+    fwrite(STDERR, "sync-upstream-bridge: unable to atomically write Utils.js\n");
+    exit(1);
+}
+
+fwrite(STDOUT, sprintf("Synchronized whatsapp-web.js 1.34.7@942d236 Utils.js (%d bytes).\n", strlen($source)));

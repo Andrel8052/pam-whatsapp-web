@@ -1,0 +1,8 @@
+parameters:
+    level: 9
+    paths:
+        - bin/parity
+        - src
+        - tests/Support
+        - tests/integration
+    tmpDir: .phpstan-cache

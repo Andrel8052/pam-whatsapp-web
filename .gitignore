@@ -1,0 +1,5 @@
+/vendor/
+/.phpstan-cache/
+/.phpunit.cache/
+/.wwebjs_cache/
+/certification-report.json

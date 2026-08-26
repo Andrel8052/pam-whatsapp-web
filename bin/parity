@@ -1,0 +1,2969 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+const BASELINE_URL = 'https://raw.githubusercontent.com/wwebjs/whatsapp-web.js/942d236a11ad68807308b058303ba5256915979c/index.d.ts';
+const BASELINE_VERSION = '1.34.7';
+const BASELINE_COMMIT = '942d236a11ad68807308b058303ba5256915979c';
+const BASELINE_SHA256 = 'a08f1fb5521d4988fd91c7ffe767a8a1d19bef3bbdab7616dd93a4e041e7b3b6';
+const MATRIX_PATH = __DIR__.'/../api-matrix.json';
+
+enum DeclarationKind: int
+{
+    case ClassLike = 1;
+    case InterfaceLike = 2;
+    case EnumLike = 3;
+    case Alias = 4;
+}
+
+enum MemberKind: int
+{
+    case Method = 1;
+    case Property = 2;
+    case Event = 3;
+    case EnumCase = 4;
+}
+
+enum ReturnKind: int
+{
+    case Unknown = 1;
+    case Void = 2;
+    case Boolean = 3;
+    case Number = 4;
+    case String = 5;
+    case Array = 6;
+    case NullableBoolean = 7;
+    case NullableNumber = 8;
+    case NullableString = 9;
+    case NullableArray = 10;
+}
+
+enum ParameterKind: int
+{
+    case Unknown = 1;
+    case Boolean = 2;
+    case Number = 3;
+    case String = 4;
+    case Array = 5;
+}
+
+enum ParityState: int
+{
+    case Pending = 1;
+    case InProgress = 2;
+    case Complete = 3;
+    case Blocked = 4;
+}
+
+/** @return never */
+function fail(string $message): never
+{
+    fwrite(STDERR, "parity: {$message}\n");
+    exit(1);
+}
+
+function baseline(): string
+{
+    $context = stream_context_create(['http' => ['timeout' => 30.0]]);
+    $source = @file_get_contents(BASELINE_URL, false, $context);
+    if (!is_string($source)) {
+        fail('unable to download the pinned TypeScript contract');
+    }
+    if (!hash_equals(BASELINE_SHA256, hash('sha256', $source))) {
+        fail('the pinned TypeScript contract digest changed');
+    }
+
+    return str_replace("\r\n", "\n", $source);
+}
+
+/**
+ * @return list<array{
+ *   id: string,
+ *   kind: int,
+ *   signatureHash: string,
+ *   state: int,
+ *   phpSymbol: string|null,
+ *   members: list<array{id: string, name: string, kind: int, static: bool, minimumArguments: int|null, maximumArguments: int|null, parameterKinds: list<int>|null, parameterNames: list<string>|null, parameterTypeNames: list<string>|null, parameterTypeOverrides: list<int>, parameterNameOverrides: list<int>, constructorContractOverride: bool, returnKind: int|null, returnTypeName: string|null, returnCollectionElementTypeName: string|null, returnObjectShape: list<array{name: string, type: string, optional: bool}>|null, returnObjectTypeOverrides: list<string>, returnIndexSignature: array{keyType: string, valueType: string}|null, propertyTypeName: string|null, propertyOptional: bool|null, propertyTypeOverride: bool, propertyRuntimeNullable: bool, propertyCollectionElementTypeName: string|null, propertyObjectShape: list<array{name: string, type: string, optional: bool}>|null, propertyIndexSignature: array{keyType: string, valueType: string}|null, propertyStructureOverride: bool, propertyStructureTypeOverrides: list<string>, propertyUnionTypeNames: list<string>|null, returnTypeOverride: bool, runtimeNullable: bool, signatureHash: string, state: int, phpMember: string|null}>
+ * }>
+ */
+function extractSymbols(string $source): array
+{
+    $source = preg_replace('~/\*.*?\*/~s', '', $source);
+    if (!is_string($source)) {
+        fail('unable to remove TypeScript comments');
+    }
+    $lines = explode("\n", $source);
+    $symbols = [];
+
+    for ($index = 0, $count = count($lines); $index < $count; ++$index) {
+        if (preg_match(
+            '/^    export (?:abstract )?(class|interface|enum|type) ([A-Za-z_$][A-Za-z0-9_$]*)/',
+            $lines[$index],
+            $match,
+        ) !== 1) {
+            continue;
+        }
+
+        $word = $match[1];
+        $name = $match[2];
+        $declaration = $lines[$index];
+        if ($word === 'type') {
+            while (!str_contains($declaration, ';') && ++$index < $count) {
+                $declaration .= "\n".$lines[$index];
+            }
+        } else {
+            $depth = substr_count($declaration, '{') - substr_count($declaration, '}');
+            while ($depth > 0 && ++$index < $count) {
+                $declaration .= "\n".$lines[$index];
+                $depth += substr_count($lines[$index], '{') - substr_count($lines[$index], '}');
+            }
+        }
+
+        $kind = match ($word) {
+            'class' => DeclarationKind::ClassLike,
+            'interface' => DeclarationKind::InterfaceLike,
+            'enum' => DeclarationKind::EnumLike,
+            'type' => DeclarationKind::Alias,
+        };
+        $members = extractMembers($declaration, $kind);
+        foreach ($members as &$member) {
+            $member['runtimeNullable'] = in_array($name.':'.$member['name'], [
+                'Client:getProfilePicUrl',
+                'Contact:getProfilePicUrl',
+                'GroupChat:getInviteCode',
+            ], true);
+            $member['parameterTypeOverrides'] = match ($name.':'.$member['name']) {
+                'Buttons:constructor' => [1],
+                'Client:sendResponseToScheduledEvent' => [2],
+                'Chat:sendMessage',
+                'Channel:sendMessage',
+                'GroupNotification:reply' => [1],
+                'Client:sendMessage' => [2],
+                'Message:edit' => [1],
+                'Message:reply' => [1],
+                default => [],
+            };
+            $member['constructorContractOverride'] = false;
+            $member['parameterNameOverrides'] = match ($name.':'.$member['name']) {
+                'Client:deleteAddressbookContact' => [1],
+                default => [],
+            };
+            $member['returnTypeOverride'] = in_array($name.':'.$member['name'], [
+                'Client:getChatById',
+                'Message:getChat',
+            ], true);
+            $member['returnObjectTypeOverrides'] = match ($name.':'.$member['name']) {
+                'Channel:getSubscribers' => ['role'],
+                'Chat:getCustomerNote',
+                'Client:getCustomerNote' => ['type'],
+                default => [],
+            };
+            $member['propertyTypeOverride'] = in_array($name.':'.$member['name'], [
+                'BusinessHoursOfDay:mode',
+                'Contact:type',
+                'GroupMembershipRequest:requestMethod',
+                'Location:latitude',
+                'Location:longitude',
+                'Message:deviceType',
+                'Message:duration',
+                'Payment:paymentStatus',
+                'Payment:paymentTxnStatus',
+                'Reaction:ack',
+                'ScheduledEventSendOptions:callType',
+                'SearchChannelsOptions:view',
+            ], true);
+            $member['propertyRuntimeNullable'] = in_array($name.':'.$member['name'], [
+                'Chat:lastMessage',
+                'Client:info',
+                'ClientInfo:phone',
+                'Client:pupBrowser',
+                'Client:pupPage',
+                'Contact:sectionHeader',
+                'GroupChat:owner',
+                'Message:eventStartTime',
+                'Message:location',
+                'Message:orderId',
+                'Message:pollName',
+                'Payment:paymentNote',
+            ], true);
+            $member['propertyStructureOverride'] = false;
+            $member['propertyStructureTypeOverrides'] = match ($name.':'.$member['name']) {
+                'BusinessContact:businessProfile' => ['businessHours'],
+                'ScheduledEvent:eventSendOptions' => ['callType', 'messageSecret'],
+                default => [],
+            };
+        }
+        unset($member);
+        $symbols[] = [
+            'id' => $name,
+            'kind' => $kind->value,
+            'signatureHash' => signatureHash($declaration),
+            'state' => ParityState::Pending->value,
+            'phpSymbol' => null,
+            'members' => $members,
+        ];
+    }
+
+    usort($symbols, static fn (array $left, array $right): int => $left['id'] <=> $right['id']);
+
+    return $symbols;
+}
+
+/**
+ * @return list<array{id: string, name: string, kind: int, static: bool, minimumArguments: int|null, maximumArguments: int|null, parameterKinds: list<int>|null, parameterNames: list<string>|null, parameterTypeNames: list<string>|null, parameterTypeOverrides: list<int>, parameterNameOverrides: list<int>, returnKind: int|null, returnTypeName: string|null, returnCollectionElementTypeName: string|null, returnObjectShape: list<array{name: string, type: string, optional: bool}>|null, returnObjectTypeOverrides: list<string>, returnIndexSignature: array{keyType: string, valueType: string}|null, propertyTypeName: string|null, propertyOptional: bool|null, propertyTypeOverride: bool, propertyRuntimeNullable: bool, propertyCollectionElementTypeName: string|null, propertyObjectShape: list<array{name: string, type: string, optional: bool}>|null, propertyIndexSignature: array{keyType: string, valueType: string}|null, propertyStructureOverride: bool, propertyStructureTypeOverrides: list<string>, propertyUnionTypeNames: list<string>|null, returnTypeOverride: bool, runtimeNullable: bool, signatureHash: string, state: int, phpMember: string|null}>
+ */
+function extractMembers(string $declaration, DeclarationKind $kind): array
+{
+    if ($kind === DeclarationKind::Alias) {
+        return [];
+    }
+
+    $segments = [];
+    $current = '';
+    foreach (explode("\n", $declaration) as $line) {
+        $startsMember = preg_match(
+            '/^        (?:(?:public\s+)?(?:static\s+)?[A-Za-z_$][A-Za-z0-9_$]*|constructor\s*\(|on\s*\()/',
+            $line,
+        ) === 1;
+        if ($startsMember && $current !== '') {
+            $segments[] = $current;
+            $current = '';
+        }
+        if ($startsMember || $current !== '') {
+            $current .= ($current === '' ? '' : "\n").$line;
+        }
+    }
+    if ($current !== '') {
+        $segments[] = $current;
+    }
+
+    $grouped = [];
+    foreach ($segments as $segment) {
+        $trimmed = trim($segment);
+        if ($trimmed === '' || $trimmed === '}') {
+            continue;
+        }
+
+        if (preg_match("/^on\s*\(\s*event:\s*'([^']+)'/s", $trimmed, $match) === 1) {
+            $memberKind = MemberKind::Event;
+            $name = $match[1];
+        } elseif ($kind === DeclarationKind::EnumLike
+            && preg_match('/^([A-Za-z_$][A-Za-z0-9_$]*)\s*(?:=|,)/', $trimmed, $match) === 1
+        ) {
+            $memberKind = MemberKind::EnumCase;
+            $name = $match[1];
+        } elseif (preg_match(
+            '/^(?:public\s+)?(?:static\s+)?([A-Za-z_$][A-Za-z0-9_$]*)\??\s*:\s*\(/',
+            $trimmed,
+            $match,
+        ) === 1 || preg_match(
+            '/^(?:public\s+)?(?:static\s+)?([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/',
+            $trimmed,
+            $match,
+        ) === 1) {
+            $memberKind = MemberKind::Method;
+            $name = $match[1];
+        } elseif (preg_match(
+            '/^(?:public\s+)?(?:readonly\s+)?([A-Za-z_$][A-Za-z0-9_$]*)\??\s*:/',
+            $trimmed,
+            $match,
+        ) === 1) {
+            $memberKind = MemberKind::Property;
+            $name = $match[1];
+        } else {
+            continue;
+        }
+
+        $id = $memberKind->value.':'.$name;
+        $static = preg_match('/^(?:public\s+)?static\s+/', $trimmed) === 1;
+        $argumentContract = $memberKind === MemberKind::Method ? argumentContract($trimmed, $name) : null;
+        $newMember = !isset($grouped[$id]);
+        $grouped[$id] ??= [
+            'id' => $id,
+            'name' => $name,
+            'kind' => $memberKind->value,
+            'static' => $static,
+            'minimumArguments' => $argumentContract[0] ?? null,
+            'maximumArguments' => $argumentContract[1] ?? null,
+            'parameterKinds' => $argumentContract[2] ?? null,
+            'parameterNames' => $argumentContract[3] ?? null,
+            'parameterTypeNames' => $argumentContract[4] ?? null,
+            'parameterTypeOverrides' => [],
+            'parameterNameOverrides' => [],
+            'constructorContractOverride' => false,
+            'returnKind' => $memberKind === MemberKind::Method ? returnKind($trimmed, $name)->value : null,
+            'returnTypeName' => $memberKind === MemberKind::Method ? returnTypeName($trimmed, $name) : null,
+            'returnCollectionElementTypeName' => $memberKind === MemberKind::Method
+                ? collectionElementTypeName(returnTypeName($trimmed, $name))
+                : null,
+            'returnObjectShape' => $memberKind === MemberKind::Method
+                ? objectShapeContract(returnTypeName($trimmed, $name))
+                : null,
+            'returnObjectTypeOverrides' => [],
+            'returnIndexSignature' => $memberKind === MemberKind::Method
+                ? indexSignatureContract(returnTypeName($trimmed, $name))
+                : null,
+            'propertyTypeName' => $memberKind === MemberKind::Property
+                ? propertyTypeName($trimmed, $name)
+                : null,
+            'propertyOptional' => $memberKind === MemberKind::Property
+                ? propertyOptional($trimmed, $name)
+                : null,
+            'propertyTypeOverride' => false,
+            'propertyRuntimeNullable' => false,
+            'propertyCollectionElementTypeName' => $memberKind === MemberKind::Property
+                ? collectionElementTypeName(propertyTypeName($trimmed, $name))
+                : null,
+            'propertyObjectShape' => $memberKind === MemberKind::Property
+                ? objectShapeContract(propertyTypeName($trimmed, $name))
+                : null,
+            'propertyIndexSignature' => $memberKind === MemberKind::Property
+                ? indexSignatureContract(propertyTypeName($trimmed, $name))
+                : null,
+            'propertyStructureOverride' => false,
+            'propertyStructureTypeOverrides' => [],
+            'propertyUnionTypeNames' => $memberKind === MemberKind::Property
+                ? unionTypeNames(propertyTypeName($trimmed, $name))
+                : null,
+            'returnTypeOverride' => false,
+            'runtimeNullable' => false,
+            'signatures' => [],
+            'state' => ParityState::Pending->value,
+            'phpMember' => null,
+        ];
+        $grouped[$id]['signatures'][] = signatureHash($trimmed);
+        if ($argumentContract !== null) {
+            $grouped[$id]['minimumArguments'] = min($grouped[$id]['minimumArguments'], $argumentContract[0]);
+            $grouped[$id]['maximumArguments'] = max($grouped[$id]['maximumArguments'], $argumentContract[1]);
+            if (!$newMember && $grouped[$id]['parameterKinds'] !== $argumentContract[2]) {
+                $grouped[$id]['parameterKinds'] = null;
+            }
+            if (!$newMember && $grouped[$id]['parameterNames'] !== $argumentContract[3]) {
+                $grouped[$id]['parameterNames'] = null;
+            }
+            if (!$newMember && $grouped[$id]['parameterTypeNames'] !== $argumentContract[4]) {
+                $grouped[$id]['parameterTypeNames'] = null;
+            }
+        }
+        if ($memberKind === MemberKind::Method) {
+            $returnKind = returnKind($trimmed, $name)->value;
+            if ($grouped[$id]['returnKind'] !== $returnKind) {
+                $grouped[$id]['returnKind'] = ReturnKind::Unknown->value;
+            }
+            $returnTypeName = returnTypeName($trimmed, $name);
+            if ($grouped[$id]['returnTypeName'] !== $returnTypeName) {
+                $grouped[$id]['returnTypeName'] = null;
+                $grouped[$id]['returnCollectionElementTypeName'] = null;
+                $grouped[$id]['returnObjectShape'] = null;
+                $grouped[$id]['returnIndexSignature'] = null;
+            }
+        }
+    }
+
+    $members = [];
+    foreach ($grouped as $member) {
+        sort($member['signatures']);
+        $members[] = [
+            'id' => $member['id'],
+            'name' => $member['name'],
+            'kind' => $member['kind'],
+            'static' => $member['static'],
+            'minimumArguments' => $member['minimumArguments'],
+            'maximumArguments' => $member['maximumArguments'],
+            'parameterKinds' => $member['parameterKinds'],
+            'parameterNames' => $member['parameterNames'],
+            'parameterTypeNames' => $member['parameterTypeNames'],
+            'parameterTypeOverrides' => $member['parameterTypeOverrides'],
+            'parameterNameOverrides' => $member['parameterNameOverrides'],
+            'constructorContractOverride' => $member['constructorContractOverride'],
+            'returnKind' => $member['returnKind'],
+            'returnTypeName' => $member['returnTypeName'],
+            'returnCollectionElementTypeName' => $member['returnCollectionElementTypeName'],
+            'returnObjectShape' => $member['returnObjectShape'],
+            'returnObjectTypeOverrides' => $member['returnObjectTypeOverrides'],
+            'returnIndexSignature' => $member['returnIndexSignature'],
+            'propertyTypeName' => $member['propertyTypeName'],
+            'propertyOptional' => $member['propertyOptional'],
+            'propertyTypeOverride' => $member['propertyTypeOverride'],
+            'propertyRuntimeNullable' => $member['propertyRuntimeNullable'],
+            'propertyCollectionElementTypeName' => $member['propertyCollectionElementTypeName'],
+            'propertyObjectShape' => $member['propertyObjectShape'],
+            'propertyIndexSignature' => $member['propertyIndexSignature'],
+            'propertyStructureOverride' => $member['propertyStructureOverride'],
+            'propertyStructureTypeOverrides' => $member['propertyStructureTypeOverrides'],
+            'propertyUnionTypeNames' => $member['propertyUnionTypeNames'],
+            'returnTypeOverride' => $member['returnTypeOverride'],
+            'runtimeNullable' => $member['runtimeNullable'],
+            'signatureHash' => hash('sha256', implode("\0", $member['signatures'])),
+            'state' => $member['state'],
+            'phpMember' => $member['phpMember'],
+        ];
+    }
+    usort($members, static fn (array $left, array $right): int => $left['id'] <=> $right['id']);
+
+    return $members;
+}
+
+function returnTypeName(string $signature, string $name): ?string
+{
+    $pattern = '/(?:^|\s)(?:public\s+)?(?:static\s+)?'.preg_quote($name, '/').'\??\s*(?::\s*)?\(/';
+    if (preg_match($pattern, $signature, $match, PREG_OFFSET_CAPTURE) !== 1) return null;
+    $matched = $match[0][0];
+    $open = $match[0][1] + strrpos($matched, '(');
+    $depth = 1;
+    $quote = null;
+    $length = strlen($signature);
+    for ($index = $open + 1; $index < $length; ++$index) {
+        $character = $signature[$index];
+        $previous = $index > 0 ? $signature[$index - 1] : '';
+        if ($quote !== null) {
+            if ($character === $quote && $previous !== '\\') $quote = null;
+            continue;
+        }
+        if ($character === "'" || $character === '"' || $character === '`') {
+            $quote = $character;
+            continue;
+        }
+        if ($character === '(') ++$depth;
+        if ($character !== ')') continue;
+        --$depth;
+        if ($depth !== 0) continue;
+        $return = substr($signature, $index + 1);
+        $return = preg_replace('/\n\s{4}\}\s*$/', '', $return);
+        if (!is_string($return)) return null;
+        if (preg_match('/^\s*(?::|=>)\s*(.+?)\s*;?\s*$/s', $return, $returnMatch) !== 1) {
+            return null;
+        }
+        $type = trim($returnMatch[1]);
+        if (preg_match('/^Promise\s*<(.+)>$/s', $type, $promise) === 1) {
+            $type = trim($promise[1]);
+        }
+
+        return preg_replace('/\s+/', ' ', $type) ?: $type;
+    }
+
+    return null;
+}
+
+function propertyTypeName(string $signature, string $name): ?string
+{
+    if (preg_match(
+        '/^(?:public\s+)?(?:readonly\s+)?'.preg_quote($name, '/').'\??\s*:\s*(.+?);?\s*(?:}\s*)?$/s',
+        trim($signature),
+        $match,
+    ) !== 1) {
+        return null;
+    }
+    $type = trim($match[1]);
+
+    return preg_replace('/\s+/', ' ', $type) ?: $type;
+}
+
+function propertyOptional(string $signature, string $name): bool
+{
+    return preg_match(
+        '/^(?:public\s+)?(?:readonly\s+)?'.preg_quote($name, '/').'\?\s*:/',
+        trim($signature),
+    ) === 1;
+}
+
+function returnKind(string $signature, string $name): ReturnKind
+{
+    $type = returnTypeName($signature, $name);
+    if ($type === null) return ReturnKind::Unknown;
+    $parts = preg_split('/\s*\|\s*/', $type);
+    if (is_array($parts)) {
+        $valueParts = array_values(array_filter(
+            $parts,
+            static fn (string $part): bool => $part !== 'null' && $part !== 'undefined',
+        ));
+        if (count($valueParts) === 1 && count($valueParts) < count($parts)) {
+            return match (baseReturnKind($valueParts[0])) {
+                ReturnKind::Boolean => ReturnKind::NullableBoolean,
+                ReturnKind::Number => ReturnKind::NullableNumber,
+                ReturnKind::String => ReturnKind::NullableString,
+                ReturnKind::Array => ReturnKind::NullableArray,
+                default => ReturnKind::Unknown,
+            };
+        }
+    }
+
+    return baseReturnKind($type);
+}
+
+function collectionElementTypeName(?string $type): ?string
+{
+    if ($type === null) return null;
+
+    $parts = splitTopLevelType($type, '|');
+    $elements = [];
+    foreach ($parts as $part) {
+        $part = trim($part);
+        if ($part === '[]' || $part === 'null' || $part === 'undefined') continue;
+        if (preg_match('/^Array\s*<(.+)>$/s', $part, $match) === 1
+            || preg_match('/^(.+)\[\]$/s', $part, $match) === 1
+            || preg_match('/^\[(.+)]$/s', $part, $match) === 1
+        ) {
+            $elements[] = trim($match[1]);
+            continue;
+        }
+
+        return null;
+    }
+    $elements = array_values(array_unique($elements));
+
+    return count($elements) === 1 ? $elements[0] : null;
+}
+
+/** @return list<array{name: string, type: string, optional: bool}>|null */
+function objectShapeContract(?string $type): ?array
+{
+    if ($type === null) return null;
+    $candidate = collectionElementTypeName($type) ?? $type;
+    $parts = splitTopLevelType($candidate, '|');
+    $objects = array_values(array_filter(
+        array_map('trim', $parts),
+        static fn (string $part): bool => str_starts_with($part, '{') && str_ends_with($part, '}'),
+    ));
+    if (count($objects) !== 1 || str_contains($objects[0], '[key:')) return null;
+    $body = trim(substr($objects[0], 1, -1));
+    $properties = [];
+    foreach (splitTopLevelType($body, ';') as $property) {
+        $property = trim($property);
+        if ($property === '') continue;
+        if (preg_match('/^([A-Za-z_$][A-Za-z0-9_$]*)(\?)?\s*:\s*(.+)$/', $property, $match) !== 1) {
+            return null;
+        }
+        $properties[] = [
+            'name' => $match[1],
+            'type' => trim($match[3]),
+            'optional' => $match[2] === '?',
+        ];
+    }
+
+    return $properties === [] ? null : $properties;
+}
+
+/** @return list<string> */
+function splitTopLevelType(string $value, string $separator): array
+{
+    $segments = [];
+    $current = '';
+    $round = $square = $curly = $angle = 0;
+    $quote = null;
+    for ($index = 0, $length = strlen($value); $index < $length; ++$index) {
+        $character = $value[$index];
+        $previous = $index > 0 ? $value[$index - 1] : '';
+        if ($quote !== null) {
+            $current .= $character;
+            if ($character === $quote && $previous !== '\\') $quote = null;
+            continue;
+        }
+        if ($character === "'" || $character === '"' || $character === '`') {
+            $quote = $character;
+            $current .= $character;
+            continue;
+        }
+        if ($character === '(') ++$round;
+        if ($character === ')') --$round;
+        if ($character === '[') ++$square;
+        if ($character === ']') --$square;
+        if ($character === '{') ++$curly;
+        if ($character === '}') --$curly;
+        if ($character === '<') ++$angle;
+        if ($character === '>') --$angle;
+        if ($character === $separator && $round === 0 && $square === 0 && $curly === 0 && $angle === 0) {
+            $segments[] = trim($current);
+            $current = '';
+            continue;
+        }
+        $current .= $character;
+    }
+    $segments[] = trim($current);
+
+    return $segments;
+}
+
+/** @return list<string>|null */
+function unionTypeNames(?string $type): ?array
+{
+    if ($type === null) return null;
+    $parts = array_values(array_filter(
+        splitTopLevelType($type, '|'),
+        static fn (string $part): bool => $part !== '',
+    ));
+
+    return count($parts) > 1 ? $parts : null;
+}
+
+/** @return array{keyType: string, valueType: string}|null */
+function indexSignatureContract(?string $type): ?array
+{
+    if ($type === null) return null;
+    foreach (splitTopLevelType($type, '|') as $part) {
+        if (preg_match(
+            '/^\{\s*\[[A-Za-z_$][A-Za-z0-9_$]*:\s*([^]]+)]\s*:\s*(.+)}$/s',
+            trim($part),
+            $match,
+        ) === 1) {
+            return ['keyType' => trim($match[1]), 'valueType' => rtrim(trim($match[2]), ';')];
+        }
+    }
+
+    return null;
+}
+
+function baseReturnKind(string $type): ReturnKind
+{
+    return match (true) {
+            $type === 'void' => ReturnKind::Void,
+            $type === 'boolean' => ReturnKind::Boolean,
+            $type === 'number' => ReturnKind::Number,
+            $type === 'string' => ReturnKind::String,
+            preg_match('/^(?:Array\s*<.+>|.+\[\])$/s', $type) === 1 => ReturnKind::Array,
+            default => ReturnKind::Unknown,
+        };
+}
+
+/** @return array{int, int, list<int>, list<string>, list<string>}|null */
+function argumentContract(string $signature, string $name): ?array
+{
+    $pattern = '/(?:^|\s)(?:public\s+)?(?:static\s+)?'.preg_quote($name, '/').'\??\s*(?::\s*)?\(/';
+    if (preg_match($pattern, $signature, $match, PREG_OFFSET_CAPTURE) !== 1) return null;
+    $matched = $match[0][0];
+    $matchedOffset = $match[0][1];
+    $open = $matchedOffset + strrpos($matched, '(');
+    $segments = [];
+    $current = '';
+    $round = 1;
+    $square = 0;
+    $curly = 0;
+    $angle = 0;
+    $quote = null;
+    $length = strlen($signature);
+    for ($index = $open + 1; $index < $length; ++$index) {
+        $character = $signature[$index];
+        $previous = $index > 0 ? $signature[$index - 1] : '';
+        if ($quote !== null) {
+            $current .= $character;
+            if ($character === $quote && $previous !== '\\') $quote = null;
+            continue;
+        }
+        if ($character === "'" || $character === '"' || $character === '`') {
+            $quote = $character;
+            $current .= $character;
+            continue;
+        }
+        if ($character === '(') ++$round;
+        if ($character === ')') {
+            --$round;
+            if ($round === 0) {
+                if (trim($current) !== '') $segments[] = trim($current);
+                break;
+            }
+        }
+        if ($character === '[') ++$square;
+        if ($character === ']') --$square;
+        if ($character === '{') ++$curly;
+        if ($character === '}') --$curly;
+        if ($character === '<') ++$angle;
+        if ($character === '>' && $angle > 0) --$angle;
+        if ($character === ',' && $round === 1 && $square === 0 && $curly === 0 && $angle === 0) {
+            $segments[] = trim($current);
+            $current = '';
+            continue;
+        }
+        $current .= $character;
+    }
+    $minimum = 0;
+    $parameterKinds = [];
+    $parameterNames = [];
+    $parameterTypeNames = [];
+    foreach ($segments as $segment) {
+        if (preg_match('/^(?:\.\.\.)?[A-Za-z_$][A-Za-z0-9_$]*\?\s*:/', $segment) !== 1
+            && preg_match('/^(?:\.\.\.)?[A-Za-z_$][A-Za-z0-9_$]*\s*=/', $segment) !== 1
+        ) {
+            ++$minimum;
+        }
+        if (preg_match('/^(?:\.\.\.)?([A-Za-z_$][A-Za-z0-9_$]*)\??\s*:/', $segment, $parameter) === 1) {
+            $parameterNames[] = $parameter[1];
+        } else {
+            $parameterNames[] = '';
+        }
+        if (preg_match('/^(?:\.\.\.)?[A-Za-z_$][A-Za-z0-9_$]*\??\s*:\s*(.+?)(?:\s*=.+)?$/s', $segment, $type) !== 1) {
+            $parameterKinds[] = ParameterKind::Unknown->value;
+            $parameterTypeNames[] = '';
+            continue;
+        }
+        $typeName = preg_replace('/\s+/', ' ', trim($type[1]));
+        $typeName = is_string($typeName) ? $typeName : trim($type[1]);
+        $parameterTypeNames[] = $typeName;
+        $parameterKinds[] = parameterKind($typeName)->value;
+    }
+
+    return [$minimum, count($segments), $parameterKinds, $parameterNames, $parameterTypeNames];
+}
+
+function parameterKind(string $type): ParameterKind
+{
+    if (str_contains($type, '|')) return ParameterKind::Unknown;
+
+    return match (true) {
+        $type === 'boolean' => ParameterKind::Boolean,
+        $type === 'number' => ParameterKind::Number,
+        $type === 'string' => ParameterKind::String,
+        preg_match('/^(?:Array\s*<.+>|.+\[\])$/s', $type) === 1 => ParameterKind::Array,
+        default => ParameterKind::Unknown,
+    };
+}
+
+function signatureHash(string $signature): string
+{
+    $normalized = preg_replace('/\s+/', ' ', trim($signature));
+
+    return hash('sha256', is_string($normalized) ? $normalized : $signature);
+}
+
+/** @return array<string, mixed>|null */
+function existingMatrix(): ?array
+{
+    if (!is_file(MATRIX_PATH)) {
+        return null;
+    }
+    $decoded = json_decode((string) file_get_contents(MATRIX_PATH), true);
+
+    if (!is_array($decoded)) {
+        return null;
+    }
+    $normalized = [];
+    foreach ($decoded as $key => $value) {
+        if (!is_string($key)) {
+            return null;
+        }
+        $normalized[$key] = $value;
+    }
+
+    return $normalized;
+}
+
+/**
+ * @param list<array{
+ *   id: string,
+ *   kind: int,
+ *   signatureHash: string,
+ *   state: int,
+ *   phpSymbol: string|null,
+ *   members: list<array{id: string, name: string, kind: int, static: bool, minimumArguments: int|null, maximumArguments: int|null, parameterKinds: list<int>|null, parameterNames: list<string>|null, parameterTypeNames: list<string>|null, parameterTypeOverrides: list<int>, parameterNameOverrides: list<int>, constructorContractOverride: bool, returnKind: int|null, returnTypeName: string|null, returnCollectionElementTypeName: string|null, returnObjectShape: list<array{name: string, type: string, optional: bool}>|null, returnObjectTypeOverrides: list<string>, returnIndexSignature: array{keyType: string, valueType: string}|null, propertyTypeName: string|null, propertyOptional: bool|null, propertyTypeOverride: bool, propertyRuntimeNullable: bool, propertyCollectionElementTypeName: string|null, propertyObjectShape: list<array{name: string, type: string, optional: bool}>|null, propertyIndexSignature: array{keyType: string, valueType: string}|null, propertyStructureOverride: bool, propertyStructureTypeOverrides: list<string>, propertyUnionTypeNames: list<string>|null, returnTypeOverride: bool, runtimeNullable: bool, signatureHash: string, state: int, phpMember: string|null}>
+ * }> $symbols
+ * @param array<string, mixed>|null $existing
+ */
+function preserveMappings(array &$symbols, ?array $existing): void
+{
+    $known = [
+        'AddParticipantsOptions' => 'Pam\\WhatsApp\\AddParticipantsOptions',
+        'AuthStrategy' => 'Pam\\WhatsApp\\Auth\\AuthStrategy',
+        'AddParticipantsResult' => 'Pam\\WhatsApp\\AddParticipantResult',
+        'BatteryInfo' => 'Pam\\WhatsApp\\Event\\BatteryChanged',
+        'Chat' => 'Pam\\WhatsApp\\Chat',
+        'Channel' => 'Pam\\WhatsApp\\Channel',
+        'ChatId' => 'Pam\\WhatsApp\\ContactId',
+        'ChatTypes' => 'Pam\\WhatsApp\\ChatType',
+        'ChangeParticipantsPermissions' => 'Pam\\WhatsApp\\Contract\\ChangeParticipantsPermissions',
+        'Client' => 'Pam\\WhatsApp\\Client',
+        'ClientInfo' => 'Pam\\WhatsApp\\ClientInfo',
+        'ClientInfoPhone' => 'Pam\\WhatsApp\\ClientInfoPhone',
+        'ClientOptions' => 'Pam\\WhatsApp\\ClientOptions',
+        'Contact' => 'Pam\\WhatsApp\\Contact',
+        'ContactId' => 'Pam\\WhatsApp\\ContactId',
+        'CreateChannelOptions' => 'Pam\\WhatsApp\\CreateChannelOptions',
+        'CreateChannelResult' => 'Pam\\WhatsApp\\CreateChannelResult',
+        'CreateGroupOptions' => 'Pam\\WhatsApp\\CreateGroupOptions',
+        'CreateGroupResult' => 'Pam\\WhatsApp\\CreateGroupResult',
+        'GroupNotification' => 'Pam\\WhatsApp\\Event\\GroupNotification',
+        'GroupNotificationTypes' => 'Pam\\WhatsApp\\GroupNotificationType',
+        'GroupChat' => 'Pam\\WhatsApp\\GroupChat',
+        'GroupParticipant' => 'Pam\\WhatsApp\\GroupParticipant',
+        'GroupMembershipRequest' => 'Pam\\WhatsApp\\GroupMembershipRequest',
+        'Label' => 'Pam\\WhatsApp\\Label',
+        'Buttons' => 'Pam\\WhatsApp\\Buttons',
+        'Broadcast' => 'Pam\\WhatsApp\\Broadcast',
+        'BusinessCategory' => 'Pam\\WhatsApp\\BusinessCategory',
+        'BusinessContact' => 'Pam\\WhatsApp\\BusinessContact',
+        'BusinessHours' => 'Pam\\WhatsApp\\BusinessHours',
+        'BusinessHoursOfDay' => 'Pam\\WhatsApp\\BusinessHoursOfDay',
+        'Call' => 'Pam\\WhatsApp\\Call',
+        'List' => 'Pam\\WhatsApp\\ListMessage',
+        'LocalAuth' => 'Pam\\WhatsApp\\Auth\\LocalAuth',
+        'Location' => 'Pam\\WhatsApp\\Location',
+        'LocationSendOptions' => 'Pam\\WhatsApp\\LocationSendOptions',
+        'Message' => 'Pam\\WhatsApp\\Message',
+        'MessageTypes' => 'Pam\\WhatsApp\\MessageType',
+        'MessageAck' => 'Pam\\WhatsApp\\MessageAck',
+        'MessageEditOptions' => 'Pam\\WhatsApp\\MessageEditOptions',
+        'MessageInfo' => 'Pam\\WhatsApp\\MessageInfo',
+        'InviteV4Data' => 'Pam\\WhatsApp\\InviteV4Data',
+        'MessageContent' => 'Pam\\WhatsApp\\Contract\\MessageContent',
+        'MessageMedia' => 'Pam\\WhatsApp\\MessageMedia',
+        'MessageMediaMetadata' => 'Pam\\WhatsApp\\MessageMediaMetadata',
+        'MessageMediaStream' => 'Pam\\WhatsApp\\MessageMediaStream',
+        'MediaStreamOptions' => 'Pam\\WhatsApp\\MediaStreamOptions',
+        'MediaFromURLOptions' => 'Pam\\WhatsApp\\MediaFromURLOptions',
+        'MessageId' => 'Pam\\WhatsApp\\MessageId',
+        'MessageSearchOptions' => 'Pam\\WhatsApp\\MessageSearchOptions',
+        'MessageSendOptions' => 'Pam\\WhatsApp\\MessageSendOptions',
+        'MessageSendChannelOptions' => 'Pam\\WhatsApp\\MessageSendChannelOptions',
+        'MembershipRequestActionOptions' => 'Pam\\WhatsApp\\MembershipRequestActionOptions',
+        'MembershipRequestActionResult' => 'Pam\\WhatsApp\\MembershipRequestActionResult',
+        'NoAuth' => 'Pam\\WhatsApp\\Auth\\NoAuth',
+        'Poll' => 'Pam\\WhatsApp\\Poll',
+        'PollSendOptions' => 'Pam\\WhatsApp\\PollSendOptions',
+        'PollVote' => 'Pam\\WhatsApp\\PollVote',
+        'SelectedPollOption' => 'Pam\\WhatsApp\\SelectedPollOption',
+        'Reaction' => 'Pam\\WhatsApp\\Reaction',
+        'ReactionList' => 'Pam\\WhatsApp\\ReactionList',
+        'Order' => 'Pam\\WhatsApp\\Order',
+        'Payment' => 'Pam\\WhatsApp\\Payment',
+        'Product' => 'Pam\\WhatsApp\\Product',
+        'ProductMetadata' => 'Pam\\WhatsApp\\ProductMetadata',
+        'PrivateChat' => 'Pam\\WhatsApp\\PrivateChat',
+        'PrivateContact' => 'Pam\\WhatsApp\\PrivateContact',
+        'RemoteAuth' => 'Pam\\WhatsApp\\Auth\\RemoteAuth',
+        'ScheduledEvent' => 'Pam\\WhatsApp\\ScheduledEvent',
+        'ScheduledEventSendOptions' => 'Pam\\WhatsApp\\ScheduledEventSendOptions',
+        'Status' => 'Pam\\WhatsApp\\Status',
+        'Store' => 'Pam\\WhatsApp\\Auth\\RemoteStore',
+        'SearchChannelsOptions' => 'Pam\\WhatsApp\\SearchChannelsOptions',
+        'TransferChannelOwnershipOptions' => 'Pam\\WhatsApp\\TransferChannelOwnershipOptions',
+        'UnsubscribeOptions' => 'Pam\\WhatsApp\\UnsubscribeOptions',
+        'LocalWebCacheOptions' => 'Pam\\WhatsApp\\LocalWebCacheOptions',
+        'RemoteWebCacheOptions' => 'Pam\\WhatsApp\\RemoteWebCacheOptions',
+        'NoWebCacheOptions' => 'Pam\\WhatsApp\\NoWebCacheOptions',
+        'WebCacheOptions' => 'Pam\\WhatsApp\\WebVersionCacheOptions',
+        'Events' => 'Pam\\WhatsApp\\EventType',
+        'WAState' => 'Pam\\WhatsApp\\ConnectionState',
+    ];
+    $knownMembers = [
+        'ChatTypes' => [
+            '4:GROUP' => 'Group',
+            '4:SOLO' => 'Solo',
+            '4:UNKNOWN' => 'Unknown',
+        ],
+        'Events' => [
+            '4:AUTHENTICATED' => 'Authenticated',
+            '4:AUTHENTICATION_FAILURE' => 'AuthenticationFailure',
+            '4:BATTERY_CHANGED' => 'BatteryChanged',
+            '4:CALL' => 'CallReceived',
+            '4:CHAT_ARCHIVED' => 'ChatArchived',
+            '4:CHAT_REMOVED' => 'ChatRemoved',
+            '4:CODE_RECEIVED' => 'PairingCodeReceived',
+            '4:CONTACT_CHANGED' => 'ContactChanged',
+            '4:DISCONNECTED' => 'Disconnected',
+            '4:GROUP_ADMIN_CHANGED' => 'GroupAdminChanged',
+            '4:GROUP_JOIN' => 'GroupJoined',
+            '4:GROUP_LEAVE' => 'GroupLeft',
+            '4:GROUP_MEMBERSHIP_REQUEST' => 'GroupMembershipRequest',
+            '4:GROUP_UPDATE' => 'GroupUpdated',
+            '4:INCOMING_CALL' => 'CallReceived',
+            '4:LOADING_SCREEN' => 'LoadingScreen',
+            '4:MEDIA_UPLOADED' => 'MediaUploaded',
+            '4:MESSAGE_ACK' => 'MessageAcknowledged',
+            '4:MESSAGE_CIPHERTEXT' => 'MessageCiphertext',
+            '4:MESSAGE_CIPHERTEXT_FAILED' => 'MessageCiphertextFailed',
+            '4:MESSAGE_CREATE' => 'MessageCreated',
+            '4:MESSAGE_EDIT' => 'MessageEdited',
+            '4:MESSAGE_REACTION' => 'MessageReaction',
+            '4:MESSAGE_RECEIVED' => 'MessageReceived',
+            '4:MESSAGE_REVOKED_EVERYONE' => 'MessageRevokedEveryone',
+            '4:MESSAGE_REVOKED_ME' => 'MessageRevokedMe',
+            '4:QR_RECEIVED' => 'QrCode',
+            '4:READY' => 'Ready',
+            '4:REMOTE_SESSION_SAVED' => 'RemoteSessionSaved',
+            '4:STATE_CHANGED' => 'StateChanged',
+            '4:UNREAD_COUNT' => 'UnreadCountChanged',
+            '4:VOTE_UPDATE' => 'VoteUpdated',
+        ],
+        'GroupNotificationTypes' => [
+            '4:ADD' => 'Add',
+            '4:ANNOUNCE' => 'Announce',
+            '4:DEMOTE' => 'Demote',
+            '4:DESCRIPTION' => 'Description',
+            '4:INVITE' => 'Invite',
+            '4:LEAVE' => 'Leave',
+            '4:PICTURE' => 'Picture',
+            '4:PROMOTE' => 'Promote',
+            '4:REMOVE' => 'Remove',
+            '4:RESTRICT' => 'Restrict',
+            '4:SUBJECT' => 'Subject',
+        ],
+        'MessageTypes' => [
+            '4:ALBUM' => 'Album',
+            '4:AUDIO' => 'Audio',
+            '4:BROADCAST_NOTIFICATION' => 'BroadcastNotification',
+            '4:BUTTONS_RESPONSE' => 'ButtonsResponse',
+            '4:CALL_LOG' => 'CallLog',
+            '4:CIPHERTEXT' => 'Ciphertext',
+            '4:CONTACT_CARD' => 'ContactCard',
+            '4:CONTACT_CARD_MULTI' => 'ContactCardMulti',
+            '4:DEBUG' => 'Debug',
+            '4:DOCUMENT' => 'Document',
+            '4:E2E_NOTIFICATION' => 'E2eNotification',
+            '4:GP2' => 'GroupProtocol',
+            '4:GROUP_INVITE' => 'GroupInvite',
+            '4:GROUP_NOTIFICATION' => 'GroupNotification',
+            '4:HSM' => 'HighlyStructured',
+            '4:IMAGE' => 'Image',
+            '4:INTERACTIVE' => 'Interactive',
+            '4:LIST' => 'List',
+            '4:LIST_RESPONSE' => 'ListResponse',
+            '4:LOCATION' => 'Location',
+            '4:NATIVE_FLOW' => 'NativeFlow',
+            '4:NOTIFICATION' => 'Notification',
+            '4:NOTIFICATION_TEMPLATE' => 'NotificationTemplate',
+            '4:ORDER' => 'Order',
+            '4:OVERSIZED' => 'Oversized',
+            '4:PAYMENT' => 'Payment',
+            '4:POLL_CREATION' => 'PollCreation',
+            '4:PRODUCT' => 'Product',
+            '4:PROTOCOL' => 'Protocol',
+            '4:REACTION' => 'Reaction',
+            '4:REVOKED' => 'Revoked',
+            '4:SCHEDULED_EVENT_CREATION' => 'ScheduledEventCreation',
+            '4:STICKER' => 'Sticker',
+            '4:TEMPLATE_BUTTON_REPLY' => 'TemplateButtonReply',
+            '4:TEXT' => 'Text',
+            '4:UNKNOWN' => 'Unknown',
+            '4:VIDEO' => 'Video',
+            '4:VOICE' => 'Voice',
+        ],
+        'WAState' => [
+            '4:CONFLICT' => 'Conflict',
+            '4:CONNECTED' => 'Connected',
+            '4:DEPRECATED_VERSION' => 'DeprecatedVersion',
+            '4:OPENING' => 'Opening',
+            '4:PAIRING' => 'Pairing',
+            '4:PROXYBLOCK' => 'ProxyBlock',
+            '4:SMB_TOS_BLOCK' => 'SmbaTosBlock',
+            '4:TIMEOUT' => 'Timeout',
+            '4:TOS_BLOCK' => 'TosBlock',
+            '4:UNLAUNCHED' => 'Unlaunched',
+            '4:UNPAIRED' => 'Unpaired',
+            '4:UNPAIRED_IDLE' => 'UnpairedIdle',
+        ],
+        'ClientOptions' => [
+            '2:authStrategy' => 'authStrategy',
+            '2:authTimeoutMs' => 'authTimeoutMs',
+            '2:browserName' => 'browserName',
+            '2:bypassCSP' => 'bypassCSP',
+            '2:deviceName' => 'deviceName',
+            '2:evalOnNewDoc' => 'evalOnNewDoc',
+            '2:ffmpegPath' => 'ffmpegPath',
+            '2:pairWithPhoneNumber' => 'pairWithPhoneNumber',
+            '2:proxyAuthentication' => 'proxyAuthentication',
+            '2:puppeteer' => 'puppeteer',
+            '2:qrMaxRetries' => 'qrMaxRetries',
+            '2:takeoverOnConflict' => 'takeoverOnConflict',
+            '2:takeoverTimeoutMs' => 'takeoverTimeoutMs',
+            '2:userAgent' => 'userAgent',
+            '2:webVersion' => 'webVersion',
+            '2:webVersionCache' => 'webVersionCache',
+        ],
+        'ClientInfo' => [
+            '2:getBatteryStatus' => 'getBatteryStatus',
+            '2:me' => 'me',
+            '2:phone' => 'phone',
+            '2:platform' => 'platform',
+            '2:pushname' => 'pushname',
+            '2:wid' => 'wid',
+        ],
+        'ClientInfoPhone' => [
+            '2:device_manufacturer' => 'device_manufacturer',
+            '2:device_model' => 'device_model',
+            '2:os_build_number' => 'os_build_number',
+            '2:os_version' => 'os_version',
+            '2:wa_version' => 'wa_version',
+        ],
+        'Channel' => [
+            '1:acceptChannelAdminInvite' => 'acceptChannelAdminInvite',
+            '1:deleteChannel' => 'deleteChannel',
+            '1:demoteChannelAdmin' => 'demoteChannelAdmin',
+            '1:getSubscribers' => 'getSubscribers',
+            '1:mute' => 'mute',
+            '1:revokeChannelAdminInvite' => 'revokeChannelAdminInvite',
+            '1:sendChannelAdminInvite' => 'sendChannelAdminInvite',
+            '1:sendMessage' => 'sendMessage',
+            '1:sendSeen' => 'sendSeen',
+            '1:setDescription' => 'setDescription',
+            '1:setProfilePicture' => 'setProfilePicture',
+            '1:setReactionSetting' => 'setReactionSetting',
+            '1:setSubject' => 'setSubject',
+            '1:transferChannelOwnership' => 'transferChannelOwnership',
+            '1:unmute' => 'unmute',
+            '2:description' => 'description',
+            '2:fetchMessages' => 'fetchMessages',
+            '2:id' => 'id',
+            '2:isChannel' => 'isChannel',
+            '2:isGroup' => 'isGroup',
+            '2:isMuted' => 'isMuted',
+            '2:isReadOnly' => 'isReadOnly',
+            '2:lastMessage' => 'lastMessage',
+            '2:muteExpiration' => 'muteExpiration',
+            '2:name' => 'name',
+            '2:timestamp' => 'timestamp',
+            '2:unreadCount' => 'unreadCount',
+        ],
+        'Call' => [
+            '2:canHandleLocally' => 'canHandleLocally',
+            '2:from' => 'from',
+            '2:fromMe' => 'fromMe',
+            '2:id' => 'id',
+            '2:isGroup' => 'isGroup',
+            '2:isVideo' => 'isVideo',
+            '2:participants' => 'participants',
+            '2:reject' => 'reject',
+            '2:timestamp' => 'timestamp',
+            '2:webClientShouldHandle' => 'webClientShouldHandle',
+        ],
+        'BusinessCategory' => [
+            '2:id' => 'id',
+            '2:localized_display_name' => 'localized_display_name',
+        ],
+        'BusinessContact' => [
+            '2:businessProfile' => 'businessProfile',
+        ],
+        'BusinessHours' => [
+            '2:config' => 'config',
+            '2:timezone' => 'timezone',
+        ],
+        'BusinessHoursOfDay' => [
+            '2:hours' => 'hours',
+            '2:mode' => 'mode',
+        ],
+        'MessageSendChannelOptions' => [
+            '2:caption' => 'caption',
+            '2:extra' => 'extra',
+            '2:media' => 'media',
+            '2:mentions' => 'mentions',
+        ],
+        'Location' => [
+            '1:constructor' => '__construct',
+            '2:address' => 'address',
+            '2:description' => 'description',
+            '2:latitude' => 'latitude',
+            '2:longitude' => 'longitude',
+            '2:name' => 'name',
+            '2:url' => 'url',
+        ],
+        'List' => [
+            '1:constructor' => '__construct',
+            '2:body' => 'body',
+            '2:buttonText' => 'buttonText',
+            '2:footer' => 'footer',
+            '2:sections' => 'sections',
+            '2:title' => 'title',
+        ],
+        'Buttons' => [
+            '1:constructor' => '__construct',
+            '2:body' => 'body',
+            '2:buttons' => 'buttons',
+            '2:footer' => 'footer',
+            '2:title' => 'title',
+        ],
+        'Poll' => [
+            '1:constructor' => '__construct',
+            '2:options' => 'options',
+            '2:pollName' => 'pollName',
+            '2:pollOptions' => 'pollOptions',
+        ],
+        'ScheduledEvent' => [
+            '1:constructor' => '__construct',
+            '2:eventSendOptions' => 'eventSendOptions',
+            '2:name' => 'name',
+            '2:startTimeTs' => 'startTimeTs',
+        ],
+        'LocalAuth' => [
+            '1:constructor' => '__construct',
+            '2:clientId' => 'clientId',
+            '2:dataPath' => 'dataPath',
+        ],
+        'RemoteAuth' => [
+            '1:constructor' => '__construct',
+            '2:clientId' => 'clientId',
+            '2:dataPath' => 'dataPath',
+        ],
+        'ProductMetadata' => [
+            '2:description' => 'description',
+            '2:id' => 'id',
+            '2:name' => 'name',
+            '2:retailer_id' => 'retailer_id',
+        ],
+        'Status' => [
+            '4:AUTHENTICATING' => 'Authenticating',
+            '4:INITIALIZING' => 'Initializing',
+            '4:READY' => 'Ready',
+        ],
+        'LocationSendOptions' => [
+            '2:address' => 'address',
+            '2:name' => 'name',
+            '2:url' => 'url',
+        ],
+        'MediaFromURLOptions' => [
+            '2:client' => 'client',
+            '2:filename' => 'filename',
+            '2:reqOptions' => 'reqOptions',
+            '2:unsafeMime' => 'unsafeMime',
+        ],
+        'MediaStreamOptions' => [
+            '2:chunkSize' => 'chunkSize',
+        ],
+        'MessageMediaMetadata' => [
+            '2:filename' => 'filename',
+            '2:filesize' => 'filesize',
+            '2:mimetype' => 'mimetype',
+        ],
+        'MessageMediaStream' => [
+            '2:stream' => 'stream',
+        ],
+        'MessageId' => [
+            '2:_serialized' => '_serialized',
+            '2:fromMe' => 'fromMe',
+            '2:id' => 'id',
+            '2:remote' => 'remote',
+        ],
+        'PollSendOptions' => [
+            '2:allowMultipleAnswers' => 'allowMultipleAnswers',
+            '2:messageSecret' => 'messageSecret',
+        ],
+        'ScheduledEventSendOptions' => [
+            '2:callType' => 'callType',
+            '2:description' => 'description',
+            '2:endTime' => 'endTime',
+            '2:isEventCanceled' => 'isEventCanceled',
+            '2:location' => 'location',
+            '2:messageSecret' => 'messageSecret',
+        ],
+        'Store' => [
+            '2:delete' => 'delete',
+            '2:extract' => 'extract',
+            '2:save' => 'save',
+            '2:sessionExists' => 'sessionExists',
+        ],
+        'LocalWebCacheOptions' => [
+            '2:path' => 'path',
+            '2:strict' => 'strict',
+            '2:type' => 'type',
+        ],
+        'RemoteWebCacheOptions' => [
+            '2:remotePath' => 'remotePath',
+            '2:strict' => 'strict',
+            '2:type' => 'type',
+        ],
+        'NoWebCacheOptions' => [
+            '2:type' => 'type',
+        ],
+        'TransferChannelOwnershipOptions' => [
+            '2:shouldDismissSelfAsAdmin' => 'shouldDismissSelfAsAdmin',
+        ],
+        'CreateChannelOptions' => [
+            '2:description' => 'description',
+            '2:picture' => 'picture',
+        ],
+        'CreateChannelResult' => [
+            '2:createdAtTs' => 'createdAtTs',
+            '2:inviteLink' => 'inviteLink',
+            '2:nid' => 'nid',
+            '2:title' => 'title',
+        ],
+        'CreateGroupOptions' => [
+            '2:autoSendInviteV4' => 'autoSendInviteV4',
+            '2:comment' => 'comment',
+            '2:isAnnounce' => 'isAnnounce',
+            '2:isRestrict' => 'isRestrict',
+            '2:memberAddMode' => 'memberAddMode',
+            '2:membershipApprovalMode' => 'membershipApprovalMode',
+            '2:messageTimer' => 'messageTimer',
+            '2:parentGroupId' => 'parentGroupId',
+        ],
+        'CreateGroupResult' => [
+            '2:gid' => 'gid',
+            '2:participants' => 'participants',
+            '2:title' => 'title',
+        ],
+        'SearchChannelsOptions' => [
+            '2:countryCodes' => 'countryCodes',
+            '2:limit' => 'limit',
+            '2:searchText' => 'searchText',
+            '2:skipSubscribedNewsletters' => 'skipSubscribedNewsletters',
+            '2:view' => 'view',
+        ],
+        'UnsubscribeOptions' => [
+            '2:deleteLocalModels' => 'deleteLocalModels',
+        ],
+        'AddParticipantsOptions' => [
+            '2:autoSendInviteV4' => 'autoSendInviteV4',
+            '2:comment' => 'comment',
+            '2:sleep' => 'sleep',
+        ],
+        'AuthStrategy' => [
+            '2:afterAuthReady' => 'afterAuthReady',
+            '2:afterBrowserInitialized' => 'afterBrowserInitialized',
+            '2:beforeBrowserInitialized' => 'beforeBrowserInitialized',
+            '2:destroy' => 'destroy',
+            '2:disconnect' => 'disconnect',
+            '2:getAuthEventPayload' => 'getAuthEventPayload',
+            '2:logout' => 'logout',
+            '2:onAuthenticationNeeded' => 'onAuthenticationNeeded',
+            '2:setup' => 'setup',
+        ],
+        'Chat' => [
+            '2:addOrEditCustomerNote' => 'addOrEditCustomerNote',
+            '2:archive' => 'archive',
+            '2:archived' => 'archived',
+            '2:changeLabels' => 'changeLabels',
+            '2:clearMessages' => 'clearMessages',
+            '2:clearState' => 'clearState',
+            '2:delete' => 'delete',
+            '2:fetchMessages' => 'fetchMessages',
+            '2:getContact' => 'getContact',
+            '2:getCustomerNote' => 'getCustomerNote',
+            '2:getLabels' => 'getLabels',
+            '2:getPinnedMessages' => 'getPinnedMessages',
+            '2:id' => 'id',
+            '2:isGroup' => 'isGroup',
+            '2:isLocked' => 'isLocked',
+            '2:isMuted' => 'isMuted',
+            '2:isReadOnly' => 'isReadOnly',
+            '2:lastMessage' => 'lastMessage',
+            '2:markUnread' => 'markUnread',
+            '2:mute' => 'mute',
+            '2:muteExpiration' => 'muteExpiration',
+            '2:name' => 'name',
+            '2:pin' => 'pin',
+            '2:pinned' => 'pinned',
+            '2:sendMessage' => 'sendMessage',
+            '2:sendSeen' => 'sendSeen',
+            '2:sendStateRecording' => 'sendStateRecording',
+            '2:sendStateTyping' => 'sendStateTyping',
+            '2:syncHistory' => 'syncHistory',
+            '2:timestamp' => 'timestamp',
+            '2:unarchive' => 'unarchive',
+            '2:unmute' => 'unmute',
+            '2:unpin' => 'unpin',
+            '2:unreadCount' => 'unreadCount',
+        ],
+        'Client' => [
+            '1:acceptInvite' => 'acceptInvite',
+            '1:acceptChannelAdminInvite' => 'acceptChannelAdminInvite',
+            '1:constructor' => '__construct',
+            '1:destroy' => 'destroy',
+            '1:archiveChat' => 'archiveChat',
+            '1:acceptGroupV4Invite' => 'acceptGroupV4Invite',
+            '1:createChannel' => 'createChannel',
+            '1:createGroup' => 'createGroup',
+            '1:createCallLink' => 'createCallLink',
+            '1:cancelPairingCode' => 'cancelPairingCode',
+            '1:deleteAddressbookContact' => 'deleteAddressbookContact',
+            '1:deleteProfilePicture' => 'deleteProfilePicture',
+            '1:deleteChannel' => 'deleteChannel',
+            '1:demoteChannelAdmin' => 'demoteChannelAdmin',
+            '1:getCountryCode' => 'getCountryCode',
+            '1:getBlockedContacts' => 'getBlockedContacts',
+            '1:getBroadcastById' => 'getBroadcastById',
+            '1:getBroadcasts' => 'getBroadcasts',
+            '1:getCommonGroups' => 'getCommonGroups',
+            '1:getFormattedNumber' => 'getFormattedNumber',
+            '1:getNumberId' => 'getNumberId',
+            '1:getProfilePicUrl' => 'getProfilePicUrl',
+            '1:getChatById' => 'getChatById',
+            '1:getChats' => 'getChats',
+            '1:getChannels' => 'getChannels',
+            '1:getChannelByInviteCode' => 'getChannelByInviteCode',
+            '1:getChatsByLabelId' => 'getChatsByLabelId',
+            '1:getContactDeviceCount' => 'getContactDeviceCount',
+            '1:getContactLidAndPhone' => 'getContactLidAndPhone',
+            '1:getInviteInfo' => 'getInviteInfo',
+            '1:getLabelById' => 'getLabelById',
+            '1:getMessageById' => 'getMessageById',
+            '1:getContactById' => 'getContactById',
+            '1:getContacts' => 'getContacts',
+            '1:getChatLabels' => 'getChatLabels',
+            '1:getLabels' => 'getLabels',
+            '1:getPinnedMessages' => 'getPinnedMessages',
+            '1:getPollVotes' => 'getPollVotes',
+            '1:addOrEditCustomerNote' => 'addOrEditCustomerNote',
+            '1:addOrRemoveLabels' => 'addOrRemoveLabels',
+            '1:approveGroupMembershipRequests' => 'approveGroupMembershipRequests',
+            '1:getCustomerNote' => 'getCustomerNote',
+            '1:getGroupMembershipRequests' => 'getGroupMembershipRequests',
+            '1:getState' => 'getState',
+            '1:getWWebVersion' => 'getWWebVersion',
+            '1:initialize' => 'initialize',
+            '1:on' => 'on',
+            '2:info' => 'info',
+            '1:isRegisteredUser' => 'isRegisteredUser',
+            '1:logout' => 'logout',
+            '1:markChatUnread' => 'markChatUnread',
+            '1:muteChat' => 'muteChat',
+            '1:pinChat' => 'pinChat',
+            '1:rejectGroupMembershipRequests' => 'rejectGroupMembershipRequests',
+            '1:requestPairingCode' => 'requestPairingCode',
+            '1:resetState' => 'resetState',
+            '1:revokeStatusMessage' => 'revokeStatusMessage',
+            '1:sendPresenceAvailable' => 'sendPresenceAvailable',
+            '1:sendPresenceUnavailable' => 'sendPresenceUnavailable',
+            '1:sendMessage' => 'sendMessage',
+            '1:sendReaction' => 'sendReaction',
+            '1:sendResponseToScheduledEvent' => 'sendResponseToScheduledEvent',
+            '1:sendChannelAdminInvite' => 'sendChannelAdminInvite',
+            '1:sendSeen' => 'sendSeen',
+            '1:setDisplayName' => 'setDisplayName',
+            '1:setAutoDownloadAudio' => 'setAutoDownloadAudio',
+            '1:setAutoDownloadDocuments' => 'setAutoDownloadDocuments',
+            '1:setAutoDownloadPhotos' => 'setAutoDownloadPhotos',
+            '1:setAutoDownloadVideos' => 'setAutoDownloadVideos',
+            '1:setBackgroundSync' => 'setBackgroundSync',
+            '1:setProfilePicture' => 'setProfilePicture',
+            '1:setStatus' => 'setStatus',
+            '1:syncHistory' => 'syncHistory',
+            '1:searchChannels' => 'searchChannels',
+            '1:searchMessages' => 'searchMessages',
+            '1:saveOrEditAddressbookContact' => 'saveOrEditAddressbookContact',
+            '1:subscribeToChannel' => 'subscribeToChannel',
+            '1:transferChannelOwnership' => 'transferChannelOwnership',
+            '1:unarchiveChat' => 'unarchiveChat',
+            '1:unmuteChat' => 'unmuteChat',
+            '1:unpinChat' => 'unpinChat',
+            '1:unsubscribeFromChannel' => 'unsubscribeFromChannel',
+            '1:revokeChannelAdminInvite' => 'revokeChannelAdminInvite',
+            '2:acceptGroupV4Invite' => 'acceptGroupV4Invite',
+            '2:interface' => 'interface',
+            '2:pupBrowser' => 'pupBrowser',
+            '2:pupPage' => 'pupPage',
+            '3:auth_failure' => 'on(EventType::AuthenticationFailure)',
+            '3:code' => 'on(EventType::PairingCodeReceived)',
+            '3:contact_changed' => 'on(EventType::ContactChanged)',
+            '3:message_reaction' => 'on(EventType::MessageReaction)',
+            '3:vote_update' => 'on(EventType::VoteUpdated)',
+            '3:authenticated' => 'on(EventType::Authenticated)',
+            '3:call' => 'on(EventType::CallReceived)',
+            '3:change_battery' => 'on(EventType::BatteryChanged)',
+            '3:change_state' => 'on(EventType::StateChanged)',
+            '3:chat_archived' => 'on(EventType::ChatArchived)',
+            '3:chat_removed' => 'on(EventType::ChatRemoved)',
+            '3:disconnected' => 'on(EventType::Disconnected)',
+            '3:group_admin_changed' => 'on(EventType::GroupAdminChanged)',
+            '3:group_join' => 'on(EventType::GroupJoined)',
+            '3:group_leave' => 'on(EventType::GroupLeft)',
+            '3:group_membership_request' => 'on(EventType::GroupMembershipRequest)',
+            '3:group_update' => 'on(EventType::GroupUpdated)',
+            '3:loading_screen' => 'on(EventType::LoadingScreen)',
+            '3:media_uploaded' => 'on(EventType::MediaUploaded)',
+            '3:message' => 'onMessage',
+            '3:message_ack' => 'on(EventType::MessageAcknowledged)',
+            '3:message_ciphertext' => 'on(EventType::MessageCiphertext)',
+            '3:message_ciphertext_failed' => 'on(EventType::MessageCiphertextFailed)',
+            '3:message_create' => 'on(EventType::MessageCreated)',
+            '3:message_edit' => 'on(EventType::MessageEdited)',
+            '3:message_revoke_everyone' => 'on(EventType::MessageRevokedEveryone)',
+            '3:message_revoke_me' => 'on(EventType::MessageRevokedMe)',
+            '3:qr' => 'onQrCode',
+            '3:ready' => 'onReady',
+            '3:remote_session_saved' => 'on(EventType::RemoteSessionSaved)',
+            '3:unread_count' => 'on(EventType::UnreadCountChanged)',
+        ],
+        'BatteryInfo' => [
+            '2:battery' => 'battery',
+            '2:plugged' => 'plugged',
+        ],
+        'ChatId' => [
+            '2:_serialized' => '_serialized',
+            '2:server' => 'server',
+            '2:user' => 'user',
+        ],
+        'ContactId' => [
+            '2:_serialized' => '_serialized',
+            '2:server' => 'server',
+            '2:user' => 'user',
+        ],
+        'GroupNotification' => [
+            '2:author' => 'author',
+            '2:body' => 'body',
+            '2:chatId' => 'chatId',
+            '2:id' => 'id',
+            '2:recipientIds' => 'recipientIds',
+            '2:timestamp' => 'timestamp',
+            '2:type' => 'type',
+            '2:getChat' => 'getChat',
+            '2:getContact' => 'getContact',
+            '2:getRecipients' => 'getRecipients',
+            '2:reply' => 'reply',
+        ],
+        'GroupChat' => [
+            '2:addParticipants' => 'addParticipants',
+            '2:approveGroupMembershipRequests' => 'approveGroupMembershipRequests',
+            '2:createdAt' => 'createdAt',
+            '2:deletePicture' => 'deletePicture',
+            '2:demoteParticipants' => 'demoteParticipants',
+            '2:description' => 'description',
+            '2:getInviteCode' => 'getInviteCode',
+            '2:getGroupMembershipRequests' => 'getGroupMembershipRequests',
+            '2:leave' => 'leave',
+            '2:owner' => 'owner',
+            '2:participants' => 'participants',
+            '2:promoteParticipants' => 'promoteParticipants',
+            '2:rejectGroupMembershipRequests' => 'rejectGroupMembershipRequests',
+            '2:removeParticipants' => 'removeParticipants',
+            '2:revokeInvite' => 'revokeInvite',
+            '2:setAddMembersAdminsOnly' => 'setAddMembersAdminsOnly',
+            '2:setDescription' => 'setDescription',
+            '2:setInfoAdminsOnly' => 'setInfoAdminsOnly',
+            '2:setMessagesAdminsOnly' => 'setMessagesAdminsOnly',
+            '2:setPicture' => 'setPicture',
+            '2:setSubject' => 'setSubject',
+        ],
+        'GroupMembershipRequest' => [
+            '2:addedBy' => 'addedBy',
+            '2:id' => 'id',
+            '2:parentGroupId' => 'parentGroupId',
+            '2:requestMethod' => 'requestMethod',
+            '2:t' => 't',
+        ],
+        'Label' => [
+            '2:getChats' => 'getChats',
+            '2:hexColor' => 'hexColor',
+            '2:id' => 'id',
+            '2:name' => 'name',
+        ],
+        'MessageSearchOptions' => [
+            '2:fromMe' => 'fromMe',
+            '2:limit' => 'limit',
+        ],
+        'MessageSendOptions' => [
+            '2:caption' => 'caption',
+            '2:extra' => 'extra',
+            '2:groupMentions' => 'groupMentions',
+            '2:ignoreQuoteErrors' => 'ignoreQuoteErrors',
+            '2:invokedBotWid' => 'invokedBotWid',
+            '2:isViewOnce' => 'isViewOnce',
+            '2:linkPreview' => 'linkPreview',
+            '2:media' => 'media',
+            '2:mentions' => 'mentions',
+            '2:parseVCards' => 'parseVCards',
+            '2:quotedMessageId' => 'quotedMessageId',
+            '2:sendAudioAsVoice' => 'sendAudioAsVoice',
+            '2:sendMediaAsDocument' => 'sendMediaAsDocument',
+            '2:sendMediaAsHd' => 'sendMediaAsHd',
+            '2:sendMediaAsSticker' => 'sendMediaAsSticker',
+            '2:sendSeen' => 'sendSeen',
+            '2:sendVideoAsGif' => 'sendVideoAsGif',
+            '2:stickerAuthor' => 'stickerAuthor',
+            '2:stickerCategories' => 'stickerCategories',
+            '2:stickerName' => 'stickerName',
+            '2:waitUntilMsgSent' => 'waitUntilMsgSent',
+        ],
+        'MembershipRequestActionOptions' => [
+            '2:requesterIds' => 'requesterIds',
+            '2:sleep' => 'sleep',
+        ],
+        'MembershipRequestActionResult' => [
+            '2:error' => 'error',
+            '2:message' => 'message',
+            '2:requesterId' => 'requesterId',
+        ],
+        'MessageAck' => [
+            '4:ACK_ERROR' => 'Error',
+            '4:ACK_PENDING' => 'Pending',
+            '4:ACK_SERVER' => 'Server',
+            '4:ACK_DEVICE' => 'Device',
+            '4:ACK_READ' => 'Read',
+            '4:ACK_PLAYED' => 'Played',
+        ],
+        'Message' => [
+            '2:acceptGroupV4Invite' => 'acceptGroupV4Invite',
+            '2:ack' => 'ack',
+            '2:allowMultipleAnswers' => 'allowMultipleAnswers',
+            '2:author' => 'author',
+            '2:body' => 'body',
+            '2:broadcast' => 'broadcast',
+            '2:businessOwnerJid' => 'businessOwnerJid',
+            '2:delete' => 'delete',
+            '2:description' => 'description',
+            '2:deviceType' => 'deviceType',
+            '2:downloadMedia' => 'downloadMedia',
+            '1:downloadMediaStream' => 'downloadMediaStream',
+            '2:duration' => 'duration',
+            '2:dynamicReplyButtons' => 'dynamicReplyButtons',
+            '2:edit' => 'edit',
+            '2:eventDescription' => 'eventDescription',
+            '2:eventEndTime' => 'eventEndTime',
+            '2:eventJoinLink' => 'eventJoinLink',
+            '2:eventLocation' => 'eventLocation',
+            '2:eventStartTime' => 'eventStartTime',
+            '2:editScheduledEvent' => 'editScheduledEvent',
+            '2:forward' => 'forward',
+            '2:forwardingScore' => 'forwardingScore',
+            '2:from' => 'from',
+            '2:fromMe' => 'fromMe',
+            '2:getChat' => 'getChat',
+            '2:getContact' => 'getContact',
+            '2:getGroupMentions' => 'getGroupMentions',
+            '2:getInfo' => 'getInfo',
+            '2:getOrder' => 'getOrder',
+            '2:getPayment' => 'getPayment',
+            '2:getPollVotes' => 'getPollVotes',
+            '2:getReactions' => 'getReactions',
+            '2:getMentions' => 'getMentions',
+            '2:getQuotedMessage' => 'getQuotedMessage',
+            '2:groupMentions' => 'groupMentions',
+            '2:hasMedia' => 'hasMedia',
+            '2:hasQuotedMsg' => 'hasQuotedMsg',
+            '2:hasReaction' => 'hasReaction',
+            '2:id' => 'id',
+            '2:isEphemeral' => 'isEphemeral',
+            '2:isEventCaneled' => 'isEventCaneled',
+            '2:isForwarded' => 'isForwarded',
+            '2:isGif' => 'isGif',
+            '2:inviteV4' => 'inviteV4',
+            '2:isStarred' => 'isStarred',
+            '2:isStatus' => 'isStatus',
+            '2:latestEditMsgKey' => 'latestEditMsgKey',
+            '2:latestEditSenderTimestampMs' => 'latestEditSenderTimestampMs',
+            '2:links' => 'links',
+            '2:location' => 'location',
+            '2:mediaKey' => 'mediaKey',
+            '2:mentionedIds' => 'mentionedIds',
+            '2:messageSecret' => 'messageSecret',
+            '2:orderId' => 'orderId',
+            '2:pin' => 'pin',
+            '2:pollName' => 'pollName',
+            '2:pollOptions' => 'pollOptions',
+            '2:productId' => 'productId',
+            '2:protocolMessageKey' => 'protocolMessageKey',
+            '2:rawData' => 'rawData',
+            '2:react' => 'react',
+            '2:reply' => 'reply',
+            '2:reload' => 'reload',
+            '2:selectedButtonId' => 'selectedButtonId',
+            '2:selectedRowId' => 'selectedRowId',
+            '2:star' => 'star',
+            '2:timestamp' => 'timestamp',
+            '2:title' => 'title',
+            '2:to' => 'to',
+            '2:type' => 'type',
+            '2:unpin' => 'unpin',
+            '2:unstar' => 'unstar',
+            '2:vCards' => 'vCards',
+            '2:vote' => 'vote',
+        ],
+        'Broadcast' => [
+            '2:getChat' => 'getChat',
+            '2:getContact' => 'getContact',
+            '2:id' => 'id',
+            '2:msgs' => 'msgs',
+            '2:timestamp' => 'timestamp',
+            '2:totalCount' => 'totalCount',
+            '2:unreadCount' => 'unreadCount',
+        ],
+        'Contact' => [
+            '2:block' => 'block',
+            '2:getAbout' => 'getAbout',
+            '2:getBroadcast' => 'getBroadcast',
+            '2:getChat' => 'getChat',
+            '2:getCommonGroups' => 'getCommonGroups',
+            '1:getCountryCode' => 'getCountryCode',
+            '1:getFormattedNumber' => 'getFormattedNumber',
+            '2:getProfilePicUrl' => 'getProfilePicUrl',
+            '2:id' => 'id',
+            '2:isBlocked' => 'isBlocked',
+            '2:isBusiness' => 'isBusiness',
+            '2:isEnterprise' => 'isEnterprise',
+            '2:isGroup' => 'isGroup',
+            '2:isMe' => 'isMe',
+            '2:isMyContact' => 'isMyContact',
+            '2:isUser' => 'isUser',
+            '2:isWAContact' => 'isWAContact',
+            '2:labels' => 'labels',
+            '2:name' => 'name',
+            '2:number' => 'number',
+            '2:pushname' => 'pushname',
+            '2:sectionHeader' => 'sectionHeader',
+            '2:shortName' => 'shortName',
+            '2:statusMute' => 'statusMute',
+            '2:type' => 'type',
+            '2:unblock' => 'unblock',
+            '2:verifiedLevel' => 'verifiedLevel',
+            '2:verifiedName' => 'verifiedName',
+        ],
+        'MessageEditOptions' => [
+            '2:extra' => 'extra',
+            '2:linkPreview' => 'linkPreview',
+            '2:mentions' => 'mentions',
+        ],
+        'MessageMedia' => [
+            '1:constructor' => '__construct',
+            '1:fromFilePath' => 'fromFilePath',
+            '1:fromUrl' => 'fromUrl',
+            '2:data' => 'data',
+            '2:filename' => 'filename',
+            '2:filesize' => 'filesize',
+            '2:mimetype' => 'mimetype',
+        ],
+        'Order' => [
+            '2:createdAt' => 'createdAt',
+            '2:currency' => 'currency',
+            '2:products' => 'products',
+            '2:subtotal' => 'subtotal',
+            '2:total' => 'total',
+        ],
+        'Payment' => [
+            '2:id' => 'id',
+            '2:paymentAmount1000' => 'paymentAmount1000',
+            '2:paymentCurrency' => 'paymentCurrency',
+            '2:paymentMessageReceiverJid' => 'paymentMessageReceiverJid',
+            '2:paymentNote' => 'paymentNote',
+            '2:paymentStatus' => 'paymentStatus',
+            '2:paymentTransactionTimestamp' => 'paymentTransactionTimestamp',
+            '2:paymentTxnStatus' => 'paymentTxnStatus',
+        ],
+        'PollVote' => [
+            '2:interractedAtTs' => 'interractedAtTs',
+            '2:parentMessage' => 'parentMessage',
+            '2:selectedOptions' => 'selectedOptions',
+            '2:voter' => 'voter',
+        ],
+        'Product' => [
+            '2:currency' => 'currency',
+            '2:getData' => 'getData',
+            '2:id' => 'id',
+            '2:name' => 'name',
+            '2:price' => 'price',
+            '2:quantity' => 'quantity',
+            '2:thumbnailUrl' => 'thumbnailUrl',
+        ],
+        'Reaction' => [
+            '2:ack' => 'ack',
+            '2:id' => 'id',
+            '2:msgId' => 'msgId',
+            '2:orphan' => 'orphan',
+            '2:orphanReason' => 'orphanReason',
+            '2:reaction' => 'reaction',
+            '2:read' => 'read',
+            '2:senderId' => 'senderId',
+            '2:timestamp' => 'timestamp',
+        ],
+        'SelectedPollOption' => [
+            '2:id' => 'id',
+            '2:name' => 'name',
+        ],
+    ];
+    $previous = [];
+    $existingSymbols = $existing['symbols'] ?? [];
+    if (!is_array($existingSymbols)) {
+        $existingSymbols = [];
+    }
+    foreach ($existingSymbols as $symbol) {
+        if (is_array($symbol) && is_string($symbol['id'] ?? null)) {
+            $previous[$symbol['id']] = $symbol;
+        }
+    }
+
+    foreach ($symbols as &$symbol) {
+        $old = $previous[$symbol['id']] ?? null;
+        if (is_array($old)) {
+            $symbol['state'] = is_int($old['state'] ?? null) ? $old['state'] : $symbol['state'];
+            $symbol['phpSymbol'] = is_string($old['phpSymbol'] ?? null) ? $old['phpSymbol'] : null;
+            $oldMembers = [];
+            $oldMembersByName = [];
+            $members = $old['members'] ?? [];
+            if (!is_array($members)) {
+                $members = [];
+            }
+            foreach ($members as $member) {
+                if (is_array($member) && is_string($member['id'] ?? null)) {
+                    $oldMembers[$member['id']] = $member;
+                    if (is_string($member['name'] ?? null)) {
+                        $oldMembersByName[$member['name']] = $member;
+                    }
+                }
+            }
+            foreach ($symbol['members'] as &$member) {
+                $oldMember = $oldMembers[$member['id']] ?? $oldMembersByName[$member['name']] ?? null;
+                if (is_array($oldMember)) {
+                    $member['state'] = is_int($oldMember['state'] ?? null)
+                        ? $oldMember['state']
+                        : $member['state'];
+                    $member['phpMember'] = is_string($oldMember['phpMember'] ?? null)
+                        ? $oldMember['phpMember']
+                        : null;
+                }
+            }
+            unset($member);
+        }
+        if (isset($known[$symbol['id']])) {
+            $symbol['state'] = ParityState::InProgress->value;
+            $symbol['phpSymbol'] = $known[$symbol['id']];
+        }
+        foreach ($symbol['members'] as &$member) {
+            $phpMember = $knownMembers[$symbol['id']][$member['id']] ?? null;
+            if (!is_string($phpMember)) {
+                foreach ($knownMembers[$symbol['id']] ?? [] as $knownId => $candidate) {
+                    if (substr($knownId, strpos($knownId, ':') + 1) === $member['name']) {
+                        $phpMember = $candidate;
+                        break;
+                    }
+                }
+            }
+            if (is_string($phpMember)) {
+                $member['state'] = ParityState::InProgress->value;
+                $member['phpMember'] = $phpMember;
+            }
+        }
+        unset($member);
+    }
+    unset($symbol);
+}
+
+/**
+ * @param list<array{
+ *   id: string,
+ *   kind: int,
+ *   signatureHash: string,
+ *   state: int,
+ *   phpSymbol: string|null,
+ *   members: list<array{id: string, name: string, kind: int, static: bool, minimumArguments: int|null, maximumArguments: int|null, parameterKinds: list<int>|null, parameterNames: list<string>|null, parameterTypeNames: list<string>|null, parameterTypeOverrides: list<int>, parameterNameOverrides: list<int>, constructorContractOverride: bool, returnKind: int|null, returnTypeName: string|null, returnCollectionElementTypeName: string|null, returnObjectShape: list<array{name: string, type: string, optional: bool}>|null, returnObjectTypeOverrides: list<string>, returnIndexSignature: array{keyType: string, valueType: string}|null, propertyTypeName: string|null, propertyOptional: bool|null, propertyTypeOverride: bool, propertyRuntimeNullable: bool, propertyCollectionElementTypeName: string|null, propertyObjectShape: list<array{name: string, type: string, optional: bool}>|null, propertyIndexSignature: array{keyType: string, valueType: string}|null, propertyStructureOverride: bool, propertyStructureTypeOverrides: list<string>, propertyUnionTypeNames: list<string>|null, returnTypeOverride: bool, runtimeNullable: bool, signatureHash: string, state: int, phpMember: string|null}>
+ * }> $symbols
+ * @param array<string, list<array{reportSha256: string, check: string}>> $certificationEvidence
+ * @param list<array{reportSha256: string, completedAt: string|null, whatsappWeb: string|null, coveredEntries: int}> $certifications
+ * @return array<string, mixed>
+ */
+function matrix(array $symbols, array $certificationEvidence = [], array $certifications = []): array
+{
+    $memberCount = array_sum(array_map(
+        static fn (array $symbol): int => count($symbol['members']),
+        $symbols,
+    ));
+
+    return [
+        'schemaVersion' => 19,
+        'baseline' => [
+            'package' => 'whatsapp-web.js',
+            'version' => BASELINE_VERSION,
+            'commit' => BASELINE_COMMIT,
+            'contractUrl' => BASELINE_URL,
+            'contractSha256' => BASELINE_SHA256,
+        ],
+        'states' => [
+            '1' => 'pending',
+            '2' => 'in_progress',
+            '3' => 'complete',
+            '4' => 'blocked',
+        ],
+        'declarationKinds' => [
+            '1' => 'class',
+            '2' => 'interface',
+            '3' => 'enum',
+            '4' => 'alias',
+        ],
+        'memberKinds' => [
+            '1' => 'method',
+            '2' => 'property',
+            '3' => 'event',
+            '4' => 'enum_case',
+        ],
+        'returnKinds' => [
+            '1' => 'unknown',
+            '2' => 'void',
+            '3' => 'boolean',
+            '4' => 'number',
+            '5' => 'string',
+            '6' => 'array',
+            '7' => 'nullable_boolean',
+            '8' => 'nullable_number',
+            '9' => 'nullable_string',
+            '10' => 'nullable_array',
+        ],
+        'parameterKinds' => [
+            '1' => 'unknown',
+            '2' => 'boolean',
+            '3' => 'number',
+            '4' => 'string',
+            '5' => 'array',
+        ],
+        'summary' => [
+            'symbols' => count($symbols),
+            'members' => $memberCount,
+        ],
+        'certificationEvidence' => $certificationEvidence,
+        'certifications' => $certifications,
+        'symbols' => $symbols,
+    ];
+}
+
+/** @param array<string, mixed> $value */
+function encode(array $value): string
+{
+    $json = json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+
+    return $json."\n";
+}
+
+/** @return array<string, list<array{reportSha256: string, check: string}>> */
+function certificationEvidence(mixed $value): array
+{
+    if ($value === null) return [];
+    if (!is_array($value)) fail('API matrix certification evidence is invalid');
+    $result = [];
+    foreach ($value as $key => $records) {
+        if (!is_string($key) || !is_array($records) || !array_is_list($records)) {
+            fail('API matrix certification evidence entry is invalid');
+        }
+        foreach ($records as $record) {
+            if (!is_array($record)
+                || !is_string($record['reportSha256'] ?? null)
+                || !is_string($record['check'] ?? null)
+            ) {
+                fail('API matrix certification evidence record is invalid');
+            }
+            $result[$key][] = [
+                'reportSha256' => $record['reportSha256'],
+                'check' => $record['check'],
+            ];
+        }
+    }
+
+    return $result;
+}
+
+/** @return list<array{reportSha256: string, completedAt: string|null, whatsappWeb: string|null, coveredEntries: int}> */
+function certifications(mixed $value): array
+{
+    if ($value === null) return [];
+    if (!is_array($value) || !array_is_list($value)) fail('API matrix certifications are invalid');
+    $result = [];
+    foreach ($value as $record) {
+        if (!is_array($record)
+            || !is_string($record['reportSha256'] ?? null)
+            || !(is_string($record['completedAt'] ?? null) || ($record['completedAt'] ?? null) === null)
+            || !(is_string($record['whatsappWeb'] ?? null) || ($record['whatsappWeb'] ?? null) === null)
+            || !is_int($record['coveredEntries'] ?? null)
+        ) {
+            fail('API matrix certification record is invalid');
+        }
+        $result[] = [
+            'reportSha256' => $record['reportSha256'],
+            'completedAt' => $record['completedAt'] ?? null,
+            'whatsappWeb' => $record['whatsappWeb'] ?? null,
+            'coveredEntries' => $record['coveredEntries'],
+        ];
+    }
+
+    return $result;
+}
+
+function refresh(): void
+{
+    $symbols = extractSymbols(baseline());
+    $existing = existingMatrix();
+    preserveMappings($symbols, $existing);
+    $evidence = certificationEvidence($existing['certificationEvidence'] ?? null);
+    $certifications = certifications($existing['certifications'] ?? null);
+    $payload = encode(matrix($symbols, $evidence, $certifications));
+    $temporary = MATRIX_PATH.'.tmp.'.bin2hex(random_bytes(6));
+    if (file_put_contents($temporary, $payload, LOCK_EX) !== strlen($payload)
+        || !rename($temporary, MATRIX_PATH)
+    ) {
+        @unlink($temporary);
+        fail('unable to atomically write the API matrix');
+    }
+    fwrite(STDOUT, sprintf(
+        "Generated %d symbols and %d public members in %s.\n",
+        count($symbols),
+        array_sum(array_map(static fn (array $symbol): int => count($symbol['members']), $symbols)),
+        MATRIX_PATH,
+    ));
+}
+
+function check(bool $allowIncomplete): void
+{
+    $existing = existingMatrix() ?? fail('API matrix does not exist; run bin/parity refresh');
+    $expectedSymbols = extractSymbols(baseline());
+    $actualSymbols = $existing['symbols'] ?? null;
+    if (!is_array($actualSymbols) || count($actualSymbols) !== count($expectedSymbols)) {
+        fail('API matrix symbol count differs from the pinned contract');
+    }
+
+    $pending = 0;
+    $mapped = 0;
+    $certificationEvidence = certificationEvidence($existing['certificationEvidence'] ?? null);
+    foreach (array_values($actualSymbols) as $index => $symbol) {
+        $expected = $expectedSymbols[$index];
+        if (!is_array($symbol)
+            || ($symbol['id'] ?? null) !== $expected['id']
+            || ($symbol['kind'] ?? null) !== $expected['kind']
+            || ($symbol['signatureHash'] ?? null) !== $expected['signatureHash']
+        ) {
+            fail('API matrix is stale at symbol index '.$index);
+        }
+        if (($symbol['state'] ?? null) !== ParityState::Complete->value) {
+            ++$pending;
+        } elseif (!isset($certificationEvidence['symbol:'.$expected['id']])) {
+            fail('complete symbol lacks certification evidence: '.$expected['id']);
+        }
+        if (is_string($symbol['phpSymbol'] ?? null)) {
+            ++$mapped;
+        }
+        $members = $symbol['members'] ?? null;
+        if (!is_array($members) || count($members) !== count($expected['members'])) {
+            fail('API matrix member count is stale for '.$expected['id']);
+        }
+        foreach (array_values($members) as $memberIndex => $member) {
+            $expectedMember = $expected['members'][$memberIndex];
+            if (!is_array($member)
+                || ($member['id'] ?? null) !== $expectedMember['id']
+                || ($member['static'] ?? null) !== $expectedMember['static']
+                || ($member['minimumArguments'] ?? null) !== $expectedMember['minimumArguments']
+                || ($member['maximumArguments'] ?? null) !== $expectedMember['maximumArguments']
+                || ($member['signatureHash'] ?? null) !== $expectedMember['signatureHash']
+            ) {
+                fail('API matrix member is stale for '.$expected['id']);
+            }
+            if (($member['state'] ?? null) !== ParityState::Complete->value) {
+                ++$pending;
+            } elseif (!isset($certificationEvidence['member:'.$expected['id'].':'.$expectedMember['id']])) {
+                fail('complete member lacks certification evidence: '.$expected['id'].'::'.$expectedMember['id']);
+            }
+            if (is_string($member['phpMember'] ?? null)) {
+                ++$mapped;
+            }
+        }
+    }
+
+    validatePhpMappings($actualSymbols);
+
+    if (!$allowIncomplete && $pending > 0) {
+        fail(sprintf('%d symbol/member entries are not complete', $pending));
+    }
+    fwrite(STDOUT, sprintf(
+        "API matrix matches whatsapp-web.js %s (%d mapped, %d incomplete entries allowed: %s).\n",
+        BASELINE_VERSION,
+        $mapped,
+        $pending,
+        $allowIncomplete ? 'yes' : 'no',
+    ));
+}
+
+function certify(string $reportPath, bool $dryRun): void
+{
+    if (!is_file($reportPath) || !is_readable($reportPath)) {
+        fail('certification report is not readable');
+    }
+    $raw = file_get_contents($reportPath);
+    if (!is_string($raw)) fail('unable to read certification report');
+    try {
+        $report = json_decode($raw, true, flags: JSON_THROW_ON_ERROR);
+    } catch (JsonException) {
+        fail('certification report is not valid JSON');
+    }
+    if (!is_array($report) || ($report['schemaVersion'] ?? null) !== 2) {
+        fail('certification report schema must be 2');
+    }
+    $baseline = $report['baseline'] ?? null;
+    if (!is_array($baseline)
+        || ($baseline['version'] ?? null) !== BASELINE_VERSION
+        || ($baseline['commit'] ?? null) !== BASELINE_COMMIT
+    ) {
+        fail('certification report baseline differs from the pinned contract');
+    }
+    $summary = $report['summary'] ?? null;
+    if (!is_array($summary)) fail('certification report summary is invalid');
+    $runtime = $report['runtime'] ?? null;
+    if (!is_array($runtime)
+        || !is_string($runtime['php'] ?? null)
+        || version_compare($runtime['php'], '8.5.0', '<')
+        || !is_string($runtime['whatsappWeb'] ?? null)
+        || $runtime['whatsappWeb'] === ''
+        || !is_string($runtime['completedAt'] ?? null)
+        || strtotime($runtime['completedAt']) === false
+    ) {
+        fail('certification runtime evidence is invalid or predates PHP 8.5');
+    }
+    $existing = existingMatrix() ?? fail('API matrix does not exist; run bin/parity refresh');
+    $symbols = $existing['symbols'] ?? null;
+    if (!is_array($symbols)) fail('API matrix symbols are invalid');
+
+    $valid = [];
+    foreach ($symbols as $symbol) {
+        if (!is_array($symbol) || !is_string($symbol['id'] ?? null)) continue;
+        $valid['symbol:'.$symbol['id']] = true;
+        $members = $symbol['members'] ?? null;
+        if (!is_array($members)) fail('API matrix symbol members are invalid');
+        foreach ($members as $member) {
+            if (!is_array($member) || !is_string($member['id'] ?? null)) continue;
+            $valid['member:'.$symbol['id'].':'.$member['id']] = true;
+        }
+    }
+    $digest = hash('sha256', $raw);
+    $newEvidence = [];
+    $checks = $report['checks'] ?? null;
+    if (!is_array($checks)) fail('certification report checks are invalid');
+    $statusCounts = [1 => 0, 2 => 0, 3 => 0];
+    foreach ($checks as $check) {
+        if (!is_array($check) || !is_string($check['name'] ?? null) || !is_int($check['status'] ?? null)) {
+            fail('certification report contains an invalid check');
+        }
+        if (!isset($statusCounts[$check['status']])) {
+            fail('certification report contains an unknown check status');
+        }
+        ++$statusCounts[$check['status']];
+        $covers = $check['covers'] ?? [];
+        if (!is_array($covers)) fail('certification check coverage is invalid');
+        if ($check['status'] !== 1) {
+            if ($covers !== []) fail('non-passing certification checks cannot provide coverage');
+            continue;
+        }
+        foreach ($covers as $key) {
+            if (!is_string($key) || !isset($valid[$key])) {
+                fail('certification report references an unknown matrix entry: '.(is_string($key) ? $key : 'non-string'));
+            }
+            $newEvidence[$key][] = ['reportSha256' => $digest, 'check' => $check['name']];
+        }
+    }
+    if (($summary['passed'] ?? null) !== $statusCounts[1]
+        || ($summary['failed'] ?? null) !== $statusCounts[2]
+        || ($summary['skipped'] ?? null) !== $statusCounts[3]
+    ) {
+        fail('certification report summary does not match its checks');
+    }
+    if ($statusCounts[2] !== 0) fail('certification report contains failed checks');
+    if ($newEvidence === []) fail('certification report contains no passing coverage');
+
+    $evidence = certificationEvidence($existing['certificationEvidence'] ?? null);
+    foreach ($newEvidence as $key => $records) {
+        $evidence[$key] = $records;
+    }
+    foreach ($symbols as &$symbol) {
+        if (!is_array($symbol) || !is_string($symbol['id'] ?? null)) continue;
+        $members = $symbol['members'] ?? null;
+        if (!is_array($members)) fail('API matrix symbol members are invalid');
+        foreach ($members as &$member) {
+            if (!is_array($member) || !is_string($member['id'] ?? null)) continue;
+            if (isset($evidence['member:'.$symbol['id'].':'.$member['id']])) {
+                $member['state'] = ParityState::Complete->value;
+            }
+        }
+        unset($member);
+        $symbol['members'] = $members;
+        $allMembersComplete = true;
+        foreach ($members as $member) {
+            if (!is_array($member) || ($member['state'] ?? null) !== ParityState::Complete->value) {
+                $allMembersComplete = false;
+                break;
+            }
+        }
+        if (isset($evidence['symbol:'.$symbol['id']]) && $allMembersComplete) {
+            $symbol['state'] = ParityState::Complete->value;
+        }
+    }
+    unset($symbol);
+    $certifications = certifications($existing['certifications'] ?? null);
+    $certifications[] = [
+        'reportSha256' => $digest,
+        'completedAt' => $runtime['completedAt'],
+        'whatsappWeb' => $runtime['whatsappWeb'],
+        'coveredEntries' => count($newEvidence),
+    ];
+    if ($dryRun) {
+        fwrite(STDOUT, sprintf(
+            "Validated %d certified matrix entries from report %s without modifying the matrix.\n",
+            count($newEvidence),
+            $digest,
+        ));
+        return;
+    }
+    $existing['symbols'] = $symbols;
+    $existing['certificationEvidence'] = $evidence;
+    $existing['certifications'] = $certifications;
+    $payload = encode($existing);
+    $temporary = MATRIX_PATH.'.tmp.'.bin2hex(random_bytes(6));
+    if (file_put_contents($temporary, $payload, LOCK_EX) !== strlen($payload)
+        || !rename($temporary, MATRIX_PATH)
+    ) {
+        @unlink($temporary);
+        fail('unable to atomically record certification evidence');
+    }
+    fwrite(STDOUT, sprintf("Recorded %d certified matrix entries from report %s.\n", count($newEvidence), $digest));
+}
+
+/** @param array<mixed> $symbols */
+function validatePhpMappings(array $symbols): void
+{
+    $autoload = __DIR__.'/../vendor/autoload.php';
+    if (!is_file($autoload)) {
+        fail('Composer autoload is required to validate PHP mappings');
+    }
+    require_once $autoload;
+
+    $phpSymbolsByTypeScript = [];
+    foreach ($symbols as $symbol) {
+        if (is_array($symbol)
+            && is_string($symbol['id'] ?? null)
+            && is_string($symbol['phpSymbol'] ?? null)
+        ) {
+            $phpSymbolsByTypeScript[$symbol['id']] = $symbol['phpSymbol'];
+        }
+    }
+
+    foreach ($symbols as $symbol) {
+        if (!is_array($symbol) || !is_string($symbol['phpSymbol'] ?? null)) {
+            continue;
+        }
+        $phpSymbol = $symbol['phpSymbol'];
+        if (!class_exists($phpSymbol) && !interface_exists($phpSymbol) && !enum_exists($phpSymbol)) {
+            fail('mapped PHP symbol does not exist: '.$phpSymbol);
+        }
+        $reflection = new ReflectionClass($phpSymbol);
+        $members = $symbol['members'] ?? [];
+        if (!is_array($members)) {
+            continue;
+        }
+        foreach ($members as $member) {
+            if (!is_array($member) || !is_string($member['phpMember'] ?? null)) {
+                continue;
+            }
+            $phpMember = preg_replace('/\(.*/', '', $member['phpMember']);
+            if (!is_string($phpMember) || $phpMember === '') {
+                fail('mapped PHP member is invalid on '.$phpSymbol);
+            }
+            if (!$reflection->hasMethod($phpMember)
+                && !$reflection->hasProperty($phpMember)
+                && !$reflection->hasConstant($phpMember)
+            ) {
+                fail('mapped PHP member does not exist: '.$phpSymbol.'::'.$phpMember);
+            }
+            $expectsStatic = ($member['static'] ?? false) === true;
+            $method = $reflection->hasMethod($phpMember) ? $reflection->getMethod($phpMember) : null;
+            $property = $reflection->hasProperty($phpMember) ? $reflection->getProperty($phpMember) : null;
+            $constant = $reflection->getReflectionConstant($phpMember);
+            $publicMethod = $method instanceof ReflectionMethod
+                && $method->isPublic()
+                && $method->isStatic() === $expectsStatic;
+            $publicProperty = !$expectsStatic
+                && $property instanceof ReflectionProperty
+                && $property->isPublic();
+            $publicConstant = !$expectsStatic
+                && $constant instanceof ReflectionClassConstant
+                && $constant->isPublic();
+            if (!$publicMethod && !$publicProperty && !$publicConstant) {
+                fail('mapped PHP member is not public with matching staticness: '.$phpSymbol.'::'.$phpMember);
+            }
+            if ($publicProperty && ($member['propertyTypeOverride'] ?? false) !== true) {
+                $propertyTypeName = $member['propertyTypeName'] ?? null;
+                $propertyOptional = ($member['propertyOptional'] ?? false) === true;
+                if (is_string($propertyTypeName)
+                    && !propertyTypeContractMatches(
+                        $propertyTypeName,
+                        $propertyOptional,
+                        $property->getType(),
+                        $phpSymbolsByTypeScript,
+                        ($member['propertyRuntimeNullable'] ?? false) === true,
+                    )
+                ) {
+                    fail(sprintf(
+                        'mapped PHP property has incompatible type (%s%s): %s::%s',
+                        $propertyTypeName,
+                        $propertyOptional ? ', optional' : '',
+                        $phpSymbol,
+                        $phpMember,
+                    ));
+                }
+                $propertyUnionTypeNames = $member['propertyUnionTypeNames'] ?? null;
+                $unionTypes = [];
+                if (is_array($propertyUnionTypeNames)) {
+                    foreach ($propertyUnionTypeNames as $unionType) {
+                        if (is_string($unionType)) $unionTypes[] = $unionType;
+                    }
+                }
+                if ($unionTypes !== []
+                    && !propertyUnionContractMatches(
+                        $unionTypes,
+                        $propertyOptional,
+                        $property->getType(),
+                        $phpSymbolsByTypeScript,
+                    )
+                ) {
+                    fail(sprintf(
+                        'mapped PHP property has incompatible union (%s): %s::%s',
+                        implode(' | ', $unionTypes),
+                        $phpSymbol,
+                        $phpMember,
+                    ));
+                }
+            }
+            if ($publicProperty && ($member['propertyStructureOverride'] ?? false) !== true) {
+                $propertyCollectionElementTypeName = $member['propertyCollectionElementTypeName'] ?? null;
+                if (is_string($propertyCollectionElementTypeName)) {
+                    $expectedElement = mappedParameterType(
+                        $propertyCollectionElementTypeName,
+                        $phpSymbolsByTypeScript,
+                    );
+                    if ($expectedElement !== null
+                        && !phpDocTypeMatchesClass(propertyPhpDocListElementType($property), $expectedElement)
+                    ) {
+                        fail(sprintf(
+                            'mapped PHP property has incompatible collection element (%s): %s::%s',
+                            $propertyCollectionElementTypeName,
+                            $phpSymbol,
+                            $phpMember,
+                        ));
+                    }
+                }
+                $propertyObjectShape = $member['propertyObjectShape'] ?? null;
+                if (is_array($propertyObjectShape)) {
+                    $shapeClass = propertyObjectShapeClass(
+                        $property,
+                        is_string($propertyCollectionElementTypeName),
+                    );
+                    $phpDocShape = $shapeClass === null ? propertyPhpDocArrayShape($property) : [];
+                    if (($shapeClass === null || !class_exists($shapeClass)) && $phpDocShape === []) {
+                        fail(sprintf('mapped PHP property lacks a typed object-shape target: %s::%s', $phpSymbol, $phpMember));
+                    }
+                    $shapeReflection = $shapeClass !== null && class_exists($shapeClass)
+                        ? new ReflectionClass($shapeClass)
+                        : null;
+                    $structureTypeOverrides = $member['propertyStructureTypeOverrides'] ?? [];
+                    if (!is_array($structureTypeOverrides)) $structureTypeOverrides = [];
+                    foreach ($propertyObjectShape as $shapeMember) {
+                        if (!is_array($shapeMember)
+                            || !is_string($shapeMember['name'] ?? null)
+                            || !is_string($shapeMember['type'] ?? null)
+                        ) continue;
+                        $shapeName = $shapeMember['name'];
+                        $validShapeMember = $shapeReflection instanceof ReflectionClass
+                            ? $shapeReflection->hasProperty($shapeName)
+                                && $shapeReflection->getProperty($shapeName)->isPublic()
+                                && (in_array($shapeName, $structureTypeOverrides, true)
+                                    || propertyTypeContractMatches(
+                                        $shapeMember['type'],
+                                        ($shapeMember['optional'] ?? false) === true,
+                                        $shapeReflection->getProperty($shapeName)->getType(),
+                                        $phpSymbolsByTypeScript,
+                                        false,
+                                    ))
+                            : isset($phpDocShape[$shapeName])
+                                && (in_array($shapeName, $structureTypeOverrides, true)
+                                    || typescriptTypeMatchesPhpDoc(
+                                        $shapeMember['type'],
+                                        $phpDocShape[$shapeName],
+                                        $phpSymbolsByTypeScript,
+                                    ));
+                        if (!$validShapeMember) {
+                            fail(sprintf(
+                                'mapped PHP property object-shape differs at %s: %s::%s',
+                                $shapeName,
+                                $phpSymbol,
+                                $phpMember,
+                            ));
+                        }
+                    }
+                }
+                $propertyIndexSignature = $member['propertyIndexSignature'] ?? null;
+                if (is_array($propertyIndexSignature)
+                    && is_string($propertyIndexSignature['keyType'] ?? null)
+                    && is_string($propertyIndexSignature['valueType'] ?? null)
+                ) {
+                    $map = propertyPhpDocMapTypes($property);
+                    $valueMatches = $map !== null && typescriptTypeMatchesPhpDoc(
+                        $propertyIndexSignature['valueType'],
+                        $map['valueType'],
+                        $phpSymbolsByTypeScript,
+                    );
+                    if (!$valueMatches && $map !== null) {
+                        $valueShape = objectShapeContract($propertyIndexSignature['valueType']);
+                        $valueClass = namespacedPhpDocClass($property, $map['valueType']);
+                        $valueMatches = is_array($valueShape)
+                            && $valueClass !== null
+                            && class_exists($valueClass)
+                            && objectShapeMatchesReflection(
+                                $valueShape,
+                                new ReflectionClass($valueClass),
+                                $phpSymbolsByTypeScript,
+                            );
+                    }
+                    if ($map === null
+                        || !typescriptTypeMatchesPhpDoc(
+                            $propertyIndexSignature['keyType'],
+                            $map['keyType'],
+                            $phpSymbolsByTypeScript,
+                        )
+                        || !$valueMatches
+                    ) {
+                        fail(sprintf('mapped PHP property has incompatible indexed map: %s::%s', $phpSymbol, $phpMember));
+                    }
+                }
+            }
+            if ($publicMethod && ($member['constructorContractOverride'] ?? false) !== true) {
+                $minimumArguments = $member['minimumArguments'] ?? null;
+                $maximumArguments = $member['maximumArguments'] ?? null;
+                if (is_int($minimumArguments)
+                    && $method->getNumberOfRequiredParameters() > $minimumArguments
+                ) {
+                    fail('mapped PHP method requires too many arguments: '.$phpSymbol.'::'.$phpMember);
+                }
+                if (is_int($maximumArguments)
+                    && !$method->isVariadic()
+                    && $method->getNumberOfParameters() < $maximumArguments
+                ) {
+                    fail('mapped PHP method accepts too few arguments: '.$phpSymbol.'::'.$phpMember);
+                }
+                $parameterKinds = $member['parameterKinds'] ?? null;
+                $parameterNames = $member['parameterNames'] ?? null;
+                $parameterTypeNames = $member['parameterTypeNames'] ?? null;
+                $parameterTypeOverrides = $member['parameterTypeOverrides'] ?? [];
+                if (!is_array($parameterTypeOverrides)) $parameterTypeOverrides = [];
+                if (is_array($parameterNames)) {
+                    $phpParameters = $method->getParameters();
+                    $parameterNameOverrides = $member['parameterNameOverrides'] ?? [];
+                    if (!is_array($parameterNameOverrides)) $parameterNameOverrides = [];
+                    foreach ($parameterNames as $position => $parameterName) {
+                        if (!is_int($position) || !is_string($parameterName) || $parameterName === '') continue;
+                        if (in_array($position + 1, $parameterNameOverrides, true)) continue;
+                        $parameter = $phpParameters[$position] ?? ($method->isVariadic() ? end($phpParameters) : null);
+                        if (!$parameter instanceof ReflectionParameter || $parameter->getName() !== $parameterName) {
+                            fail(sprintf(
+                                'mapped PHP method has incompatible parameter name %d (%s): %s::%s',
+                                $position + 1,
+                                $parameterName,
+                                $phpSymbol,
+                                $phpMember,
+                            ));
+                        }
+                    }
+                }
+                if (is_array($parameterTypeNames)) {
+                    $phpParameters = $method->getParameters();
+                    foreach ($parameterTypeNames as $position => $parameterTypeName) {
+                        if (!is_int($position) || !is_string($parameterTypeName)) continue;
+                        if (in_array($position + 1, $parameterTypeOverrides, true)) continue;
+                        $expectedPhpType = mappedParameterType($parameterTypeName, $phpSymbolsByTypeScript);
+                        if ($expectedPhpType === null) continue;
+                        $parameter = $phpParameters[$position] ?? ($method->isVariadic() ? end($phpParameters) : null);
+                        $actualTypes = $parameter instanceof ReflectionParameter
+                            ? array_values(array_diff(reflectionReturnNames($parameter->getType()), ['null']))
+                            : [];
+                        if ($actualTypes !== [$expectedPhpType]) {
+                            fail(sprintf(
+                                'mapped PHP method has incompatible object parameter %d (%s): %s::%s',
+                                $position + 1,
+                                $parameterTypeName,
+                                $phpSymbol,
+                                $phpMember,
+                            ));
+                        }
+                    }
+                }
+                if (is_array($parameterKinds)) {
+                    $phpParameters = $method->getParameters();
+                    foreach ($parameterKinds as $position => $parameterKindValue) {
+                        if (!is_int($position) || !is_int($parameterKindValue)) continue;
+                        if (in_array($position + 1, $parameterTypeOverrides, true)) continue;
+                        $parameterKind = ParameterKind::tryFrom($parameterKindValue);
+                        if ($parameterKind === null || $parameterKind === ParameterKind::Unknown) continue;
+                        $parameter = $phpParameters[$position] ?? ($method->isVariadic() ? end($phpParameters) : null);
+                        if (!$parameter instanceof ReflectionParameter
+                            || !parameterTypeMatches($parameterKind, $parameter->getType())
+                        ) {
+                            fail(sprintf(
+                                'mapped PHP method has incompatible %s parameter %d: %s::%s',
+                                strtolower($parameterKind->name),
+                                $position + 1,
+                                $phpSymbol,
+                                $phpMember,
+                            ));
+                        }
+                    }
+                }
+                $returnTypeName = $member['returnTypeName'] ?? null;
+                if (is_string($returnTypeName) && ($member['returnTypeOverride'] ?? false) !== true) {
+                    $expectedPhpReturn = mappedParameterType($returnTypeName, $phpSymbolsByTypeScript);
+                    if ($expectedPhpReturn !== null) {
+                        $actualPhpReturns = array_values(array_diff(
+                            reflectionReturnNames($method->getReturnType()),
+                            ['null'],
+                        ));
+                        $parent = $reflection->getParentClass();
+                        $parentName = $parent === false ? 'parent' : $parent->getName();
+                        $actualPhpReturns = array_map(
+                            static fn (string $type): string => match ($type) {
+                                'self', 'static' => $phpSymbol,
+                                'parent' => $parentName,
+                                default => $type,
+                            },
+                            $actualPhpReturns,
+                        );
+                        if ($actualPhpReturns !== [$expectedPhpReturn]) {
+                            fail(sprintf(
+                                'mapped PHP method has incompatible object return (%s): %s::%s',
+                                $returnTypeName,
+                                $phpSymbol,
+                                $phpMember,
+                            ));
+                        }
+                    }
+                }
+                $returnCollectionElementTypeName = $member['returnCollectionElementTypeName'] ?? null;
+                if (is_string($returnCollectionElementTypeName)) {
+                    $expectedPhpElement = mappedParameterType(
+                        $returnCollectionElementTypeName,
+                        $phpSymbolsByTypeScript,
+                    );
+                    if ($expectedPhpElement !== null) {
+                        $actualPhpElement = phpDocListElementType($method);
+                        $separator = strrpos($expectedPhpElement, '\\');
+                        $expectedShortName = $separator === false
+                            ? $expectedPhpElement
+                            : substr($expectedPhpElement, $separator + 1);
+                        if ($actualPhpElement !== $expectedPhpElement
+                            && $actualPhpElement !== $expectedShortName
+                        ) {
+                            fail(sprintf(
+                                'mapped PHP method has incompatible collection element (%s): %s::%s',
+                                $returnCollectionElementTypeName,
+                                $phpSymbol,
+                                $phpMember,
+                            ));
+                        }
+                    }
+                }
+                $returnObjectShape = $member['returnObjectShape'] ?? null;
+                if (is_array($returnObjectShape)) {
+                    $shapePropertyNames = [];
+                    $shapeProperties = [];
+                    foreach ($returnObjectShape as $shapeProperty) {
+                        if (!is_array($shapeProperty)
+                            || !is_string($shapeProperty['name'] ?? null)
+                            || !is_string($shapeProperty['type'] ?? null)
+                            || !is_bool($shapeProperty['optional'] ?? null)
+                        ) continue;
+                        $shapePropertyNames[] = $shapeProperty['name'];
+                        $shapeProperties[] = $shapeProperty;
+                    }
+                    $shapeTypeOverrides = $member['returnObjectTypeOverrides'] ?? [];
+                    if (!is_array($shapeTypeOverrides)) $shapeTypeOverrides = [];
+                    $shapeClass = objectShapeReturnClass($method, is_string($returnCollectionElementTypeName));
+                    if ($shapeClass !== null && class_exists($shapeClass)) {
+                        $shapeReflection = new ReflectionClass($shapeClass);
+                        foreach ($shapeProperties as $shapeProperty) {
+                            $shapePropertyName = $shapeProperty['name'];
+                            if (!$shapeReflection->hasProperty($shapePropertyName)
+                                || !$shapeReflection->getProperty($shapePropertyName)->isPublic()
+                            ) {
+                                fail(sprintf(
+                                    'mapped PHP object return lacks public shape property %s: %s::%s',
+                                    $shapePropertyName,
+                                    $phpSymbol,
+                                    $phpMember,
+                                ));
+                            }
+                            if (!in_array($shapePropertyName, $shapeTypeOverrides, true)
+                                && !typescriptTypeMatchesReflection(
+                                    $shapeProperty['type'],
+                                    $shapeReflection->getProperty($shapePropertyName)->getType(),
+                                    $phpSymbolsByTypeScript,
+                                )
+                            ) {
+                                fail(sprintf(
+                                    'mapped PHP object return has incompatible shape property type %s (%s): %s::%s',
+                                    $shapePropertyName,
+                                    $shapeProperty['type'],
+                                    $phpSymbol,
+                                    $phpMember,
+                                ));
+                            }
+                        }
+                    } else {
+                        $phpDocShape = phpDocArrayShape($method);
+                        foreach ($shapeProperties as $shapeProperty) {
+                            $actualShapeProperty = $phpDocShape[$shapeProperty['name']] ?? null;
+                            if (!is_array($actualShapeProperty)
+                                || $actualShapeProperty['optional'] !== $shapeProperty['optional']
+                                || (!in_array($shapeProperty['name'], $shapeTypeOverrides, true)
+                                    && !typescriptTypeMatchesPhpDoc(
+                                        $shapeProperty['type'],
+                                        $actualShapeProperty['type'],
+                                        $phpSymbolsByTypeScript,
+                                    ))
+                            ) {
+                                fail(sprintf(
+                                    'mapped PHP array return has incompatible shape property %s: %s::%s',
+                                    $shapeProperty['name'],
+                                    $phpSymbol,
+                                    $phpMember,
+                                ));
+                            }
+                        }
+                    }
+                }
+                $returnIndexSignature = $member['returnIndexSignature'] ?? null;
+                if (is_array($returnIndexSignature)
+                    && is_string($returnIndexSignature['keyType'] ?? null)
+                    && is_string($returnIndexSignature['valueType'] ?? null)
+                ) {
+                    $phpDocMap = phpDocMapTypes($method);
+                    if ($phpDocMap === null
+                        || !typescriptTypeMatchesPhpDoc(
+                            $returnIndexSignature['keyType'],
+                            $phpDocMap['keyType'],
+                            $phpSymbolsByTypeScript,
+                        )
+                        || !typescriptTypeMatchesPhpDoc(
+                            $returnIndexSignature['valueType'],
+                            $phpDocMap['valueType'],
+                            $phpSymbolsByTypeScript,
+                        )
+                    ) {
+                        fail(sprintf(
+                            'mapped PHP method has incompatible indexed return map: %s::%s',
+                            $phpSymbol,
+                            $phpMember,
+                        ));
+                    }
+                }
+                $returnKind = ReturnKind::tryFrom(is_int($member['returnKind'] ?? null) ? $member['returnKind'] : 0)
+                    ?? ReturnKind::Unknown;
+                if ($returnKind !== ReturnKind::Unknown) {
+                    $returnType = $method->getReturnType();
+                    $phpReturns = reflectionReturnNames($returnType);
+                    $allowsNull = in_array('null', $phpReturns, true);
+                    $runtimeNullable = ($member['runtimeNullable'] ?? false) === true;
+                    $validReturn = match ($returnKind) {
+                        ReturnKind::Void => $phpReturns === ['void'],
+                        ReturnKind::Boolean => $allowsNull === $runtimeNullable
+                            && array_values(array_diff($phpReturns, ['null'])) === ['bool'],
+                        ReturnKind::Number => $allowsNull === $runtimeNullable
+                            && $phpReturns !== []
+                            && array_diff($phpReturns, ['int', 'float', 'null']) === []
+                            && (in_array('int', $phpReturns, true) || in_array('float', $phpReturns, true)),
+                        ReturnKind::String => $allowsNull === $runtimeNullable
+                            && array_values(array_diff($phpReturns, ['null'])) === ['string'],
+                        ReturnKind::Array => $allowsNull === $runtimeNullable
+                            && array_values(array_diff($phpReturns, ['null'])) === ['array'],
+                        ReturnKind::NullableBoolean => $allowsNull && in_array('bool', $phpReturns, true),
+                        ReturnKind::NullableNumber => $allowsNull
+                            && array_diff($phpReturns, ['int', 'float', 'null']) === []
+                            && (in_array('int', $phpReturns, true) || in_array('float', $phpReturns, true)),
+                        ReturnKind::NullableString => $allowsNull && in_array('string', $phpReturns, true),
+                        ReturnKind::NullableArray => $allowsNull && in_array('array', $phpReturns, true),
+                    };
+                    if (!$validReturn) {
+                        fail(sprintf(
+                            'mapped PHP method has incompatible %s return: %s::%s',
+                            strtolower($returnKind->name),
+                            $phpSymbol,
+                            $phpMember,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+}
+
+function phpDocListElementType(ReflectionMethod $method): ?string
+{
+    $documentation = $method->getDocComment();
+    if (!is_string($documentation)
+        || preg_match('/@return\s+list<([^>]+)>/', $documentation, $match) !== 1
+    ) {
+        return null;
+    }
+
+    return ltrim(trim($match[1]), '\\');
+}
+
+function propertyPhpDocListElementType(ReflectionProperty $property): ?string
+{
+    $type = propertyPhpDocType($property);
+    if ($type === null || preg_match('/^list<([^>]+)>$/', $type, $match) !== 1) return null;
+
+    return ltrim(trim($match[1]), '\\');
+}
+
+function propertyPhpDocType(ReflectionProperty $property): ?string
+{
+    $documentation = $property->getDocComment();
+    if (is_string($documentation)
+        && preg_match('/@var\s+([^\r\n*]+)/', $documentation, $match) === 1
+    ) {
+        return trim($match[1]);
+    }
+    $constructor = $property->getDeclaringClass()->getConstructor();
+    $documentation = $constructor?->getDocComment();
+    if (!is_string($documentation)) return null;
+    if (preg_match(
+        '/@param\s+([^\s*]+)\s+\$'.preg_quote($property->getName(), '/').'\b/',
+        $documentation,
+        $match,
+    ) !== 1) {
+        return null;
+    }
+
+    return trim($match[1]);
+}
+
+function phpDocTypeMatchesClass(?string $phpDocType, string $expectedClass): bool
+{
+    if ($phpDocType === null) return false;
+    $phpDocType = ltrim($phpDocType, '\\');
+    $separator = strrpos($expectedClass, '\\');
+    $shortName = $separator === false ? $expectedClass : substr($expectedClass, $separator + 1);
+
+    return $phpDocType === $expectedClass || $phpDocType === $shortName;
+}
+
+function propertyObjectShapeClass(ReflectionProperty $property, bool $collection): ?string
+{
+    $candidate = $collection
+        ? propertyPhpDocListElementType($property)
+        : array_values(array_diff(reflectionReturnNames($property->getType()), ['null']))[0] ?? null;
+    if (!is_string($candidate) || in_array($candidate, ['array', 'bool', 'float', 'int', 'mixed', 'string'], true)) {
+        return null;
+    }
+    if (str_contains($candidate, '\\')) return $candidate;
+    $namespace = $property->getDeclaringClass()->getNamespaceName();
+
+    return $namespace === '' ? $candidate : $namespace.'\\'.$candidate;
+}
+
+function namespacedPhpDocClass(ReflectionProperty $property, string $type): ?string
+{
+    $type = ltrim(trim($type), '\\');
+    if (preg_match('/^[A-Za-z_][A-Za-z0-9_\\\\]*$/', $type) !== 1) return null;
+    if (str_contains($type, '\\')) return $type;
+    $namespace = $property->getDeclaringClass()->getNamespaceName();
+
+    return $namespace === '' ? $type : $namespace.'\\'.$type;
+}
+
+/**
+ * @param list<array{name: string, type: string, optional: bool}> $shape
+ * @param ReflectionClass<object> $reflection
+ * @param array<string, string> $phpSymbolsByTypeScript
+ */
+function objectShapeMatchesReflection(array $shape, ReflectionClass $reflection, array $phpSymbolsByTypeScript): bool
+{
+    foreach ($shape as $member) {
+        $name = $member['name'];
+        if (!$reflection->hasProperty($name)
+            || !$reflection->getProperty($name)->isPublic()
+            || !propertyTypeContractMatches(
+                $member['type'],
+                $member['optional'],
+                $reflection->getProperty($name)->getType(),
+                $phpSymbolsByTypeScript,
+                false,
+            )
+        ) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/** @return array{keyType: string, valueType: string}|null */
+function propertyPhpDocMapTypes(ReflectionProperty $property): ?array
+{
+    $type = propertyPhpDocType($property);
+    if ($type === null || preg_match('/^array<\s*([^,]+),\s*([^>]+)>$/', $type, $match) !== 1) {
+        return null;
+    }
+
+    return ['keyType' => trim($match[1]), 'valueType' => trim($match[2])];
+}
+
+/** @return array<string, string> */
+function propertyPhpDocArrayShape(ReflectionProperty $property): array
+{
+    $type = propertyPhpDocType($property);
+    if ($type === null || preg_match('/^array\{(.+)}$/', $type, $match) !== 1) return [];
+    $shape = [];
+    foreach (explode(',', $match[1]) as $member) {
+        if (preg_match('/^\s*([A-Za-z_$][A-Za-z0-9_$]*)\??\s*:\s*(.+)\s*$/', $member, $parts) !== 1) {
+            return [];
+        }
+        $shape[$parts[1]] = trim($parts[2]);
+    }
+
+    return $shape;
+}
+
+function objectShapeReturnClass(ReflectionMethod $method, bool $collection): ?string
+{
+    $candidate = $collection
+        ? phpDocListElementType($method)
+        : array_values(array_diff(reflectionReturnNames($method->getReturnType()), ['null']))[0] ?? null;
+    if (!is_string($candidate) || in_array($candidate, ['array', 'bool', 'float', 'int', 'mixed', 'string'], true)) {
+        return null;
+    }
+    if (str_contains($candidate, '\\')) return $candidate;
+    $namespace = $method->getDeclaringClass()->getNamespaceName();
+
+    return $namespace === '' ? $candidate : $namespace.'\\'.$candidate;
+}
+
+/** @return array<string, array{type: string, optional: bool}> */
+function phpDocArrayShape(ReflectionMethod $method): array
+{
+    $documentation = $method->getDocComment();
+    if (!is_string($documentation)
+        || preg_match('/@return\s+array\{([^}]+)}/', $documentation, $match) !== 1
+    ) {
+        return [];
+    }
+    $properties = [];
+    foreach (explode(',', $match[1]) as $property) {
+        if (preg_match('/^\s*([A-Za-z_$][A-Za-z0-9_$]*)(\?)?\s*:\s*([^,]+)\s*$/', $property, $parts) !== 1) {
+            continue;
+        }
+        $properties[$parts[1]] = ['type' => trim($parts[3]), 'optional' => $parts[2] === '?'];
+    }
+
+    return $properties;
+}
+
+/** @return array{keyType: string, valueType: string}|null */
+function phpDocMapTypes(ReflectionMethod $method): ?array
+{
+    $documentation = $method->getDocComment();
+    if (!is_string($documentation)
+        || preg_match('/@return\s+array<\s*([^,]+),\s*([^>]+)>/', $documentation, $match) !== 1
+    ) {
+        return null;
+    }
+
+    return ['keyType' => trim($match[1]), 'valueType' => trim($match[2])];
+}
+
+/** @param array<string, string> $phpSymbolsByTypeScript */
+function typescriptTypeMatchesReflection(
+    string $type,
+    ?ReflectionType $reflectionType,
+    array $phpSymbolsByTypeScript,
+): bool {
+    $actual = array_values(array_diff(reflectionReturnNames($reflectionType), ['null']));
+    $expectedClass = mappedParameterType($type, $phpSymbolsByTypeScript);
+    if ($expectedClass !== null) return $actual === [$expectedClass];
+
+    return match ($type) {
+        'any' => $actual === ['mixed'],
+        'boolean' => $actual === ['bool'],
+        'number' => $actual !== [] && array_diff($actual, ['int', 'float']) === [],
+        'string' => $actual === ['string'],
+        default => false,
+    };
+}
+
+/** @param array<string, string> $phpSymbolsByTypeScript */
+function propertyTypeContractMatches(
+    string $type,
+    bool $optional,
+    ?ReflectionType $reflectionType,
+    array $phpSymbolsByTypeScript,
+    bool $runtimeNullable,
+): bool {
+    $parts = preg_split('/\s*\|\s*/', $type);
+    if (!is_array($parts)) return true;
+    $nullable = $runtimeNullable || in_array('null', $parts, true) || in_array('undefined', $parts, true);
+    $valueTypes = array_values(array_filter(
+        $parts,
+        static fn (string $part): bool => $part !== 'null' && $part !== 'undefined',
+    ));
+    if (count($valueTypes) !== 1) return true;
+    $valueType = trim($valueTypes[0]);
+    $actual = reflectionReturnNames($reflectionType);
+    $actualNullable = in_array('null', $actual, true);
+    $actualValues = array_values(array_diff($actual, ['null']));
+    $expectedClass = mappedParameterType($valueType, $phpSymbolsByTypeScript);
+    $verifiable = true;
+    $typeMatches = match (true) {
+        $expectedClass !== null => count($actualValues) === 1
+            && ($actualValues[0] === $expectedClass || is_a($actualValues[0], $expectedClass, true)),
+        $valueType === 'boolean' => $actualValues === ['bool'],
+        $valueType === 'number' => $actualValues !== [] && array_diff($actualValues, ['int', 'float']) === [],
+        $valueType === 'string' => $actualValues === ['string'],
+        baseReturnKind($valueType) === ReturnKind::Array => $actualValues === ['array'],
+        default => $verifiable = false,
+    };
+
+    return !$verifiable || ($typeMatches && ($optional || $nullable === $actualNullable));
+}
+
+/**
+ * @param list<string> $types
+ * @param array<string, string> $phpSymbolsByTypeScript
+ */
+function propertyUnionContractMatches(
+    array $types,
+    bool $optional,
+    ?ReflectionType $reflectionType,
+    array $phpSymbolsByTypeScript,
+): bool {
+    $expected = [];
+    foreach ($types as $type) {
+        $type = trim($type);
+        $mapped = mappedParameterType($type, $phpSymbolsByTypeScript);
+        $category = match (true) {
+            $type === 'null' || $type === 'undefined' => 'null',
+            $type === 'boolean' => 'bool',
+            $type === 'number' => 'number',
+            $type === 'string' => 'string',
+            $type === 'any' => 'mixed',
+            $mapped !== null => 'class:'.$mapped,
+            baseReturnKind($type) === ReturnKind::Array => 'array',
+            (str_starts_with($type, '{') && str_ends_with($type, '}')) || $type === 'Object' || $type === 'object' => 'object',
+            default => null,
+        };
+        if ($category === null) return true;
+        $expected[$category] = false;
+    }
+    if ($optional) $expected['null'] ??= false;
+
+    foreach (reflectionReturnNames($reflectionType) as $actual) {
+        $category = match (true) {
+            $actual === 'null' => 'null',
+            $actual === 'bool' => 'bool',
+            $actual === 'int' || $actual === 'float' => 'number',
+            $actual === 'string' => 'string',
+            $actual === 'array' => 'array',
+            $actual === 'mixed' => 'mixed',
+            default => 'class:'.$actual,
+        };
+        if (array_key_exists($category, $expected)) {
+            $expected[$category] = true;
+            continue;
+        }
+        if (str_starts_with($category, 'class:') && array_key_exists('object', $expected)) {
+            $expected['object'] = true;
+            continue;
+        }
+        if ($category === 'array' && array_key_exists('object', $expected)) {
+            $expected['object'] = true;
+            continue;
+        }
+
+        return false;
+    }
+
+    foreach ($expected as $category => $matched) {
+        if ($category === 'null' && $optional && !$matched) continue;
+        if (!$matched) return false;
+    }
+
+    return true;
+}
+
+/** @param array<string, string> $phpSymbolsByTypeScript */
+function typescriptTypeMatchesPhpDoc(
+    string $type,
+    mixed $phpDocType,
+    array $phpSymbolsByTypeScript,
+): bool {
+    if (!is_string($phpDocType)) return false;
+    $phpDocType = ltrim(trim($phpDocType), '\\');
+    $expectedClass = mappedParameterType($type, $phpSymbolsByTypeScript);
+    if ($expectedClass !== null) {
+        $separator = strrpos($expectedClass, '\\');
+        $shortName = $separator === false ? $expectedClass : substr($expectedClass, $separator + 1);
+
+        return $phpDocType === $expectedClass || $phpDocType === $shortName;
+    }
+
+    return match ($type) {
+        'any' => $phpDocType === 'mixed',
+        'boolean' => $phpDocType === 'bool',
+        'number' => $phpDocType === 'int' || $phpDocType === 'float' || $phpDocType === 'int|float',
+        'string' => $phpDocType === 'string',
+        default => false,
+    };
+}
+
+/** @param array<string, string> $phpSymbolsByTypeScript */
+function mappedParameterType(string $type, array $phpSymbolsByTypeScript): ?string
+{
+    $externalTypes = [
+        'puppeteer.Browser' => 'Pam\\Browser\\Browser',
+        'puppeteer.Page' => 'Pam\\Browser\\Page',
+        'puppeteer.PuppeteerNodeLaunchOptions & puppeteer.ConnectOptions' => 'Pam\\Browser\\Chromium\\LaunchOptions',
+        'Date' => DateTimeInterface::class,
+    ];
+    if (isset($externalTypes[$type])) return $externalTypes[$type];
+
+    $parts = preg_split('/\s*\|\s*/', $type);
+    if (!is_array($parts)) return null;
+    $parts = array_values(array_filter(
+        $parts,
+        static fn (string $part): bool => $part !== 'null' && $part !== 'undefined',
+    ));
+    if (count($parts) !== 1 || preg_match('/^[A-Za-z_$][A-Za-z0-9_$]*$/', $parts[0]) !== 1) {
+        return null;
+    }
+
+    return $phpSymbolsByTypeScript[$parts[0]] ?? null;
+}
+
+function parameterTypeMatches(ParameterKind $kind, ?ReflectionType $type): bool
+{
+    $names = reflectionReturnNames($type);
+    $enumBackingType = null;
+    if ($type instanceof ReflectionNamedType && enum_exists($type->getName())) {
+        $enum = new ReflectionEnum($type->getName());
+        $backingType = $enum->getBackingType();
+        $enumBackingType = $backingType?->getName();
+    }
+
+    return match ($kind) {
+        ParameterKind::Boolean => in_array('bool', $names, true)
+            && array_diff($names, ['bool', 'null']) === [],
+        ParameterKind::Number => $enumBackingType === 'int'
+            || ((in_array('int', $names, true) || in_array('float', $names, true))
+                && array_diff($names, ['int', 'float', 'null']) === []),
+        ParameterKind::String => $enumBackingType !== null
+            || (in_array('string', $names, true) && array_diff($names, ['string', 'null']) === []),
+        ParameterKind::Array => in_array('array', $names, true)
+            && array_diff($names, ['array', 'null']) === [],
+        ParameterKind::Unknown => true,
+    };
+}
+
+/** @return list<string> */
+function reflectionReturnNames(?ReflectionType $type): array
+{
+    if ($type instanceof ReflectionNamedType) {
+        $names = [$type->getName()];
+        if ($type->allowsNull() && $type->getName() !== 'null') $names[] = 'null';
+        sort($names);
+
+        return $names;
+    }
+    if ($type instanceof ReflectionUnionType) {
+        $names = array_map(
+            static fn (ReflectionType $member): string => $member instanceof ReflectionNamedType
+                ? $member->getName()
+                : (string) $member,
+            $type->getTypes(),
+        );
+        sort($names);
+
+        return $names;
+    }
+
+    return [];
+}
+
+$command = $argv[1] ?? 'check';
+match ($command) {
+    'refresh' => refresh(),
+    'check' => check(in_array('--allow-incomplete', $argv, true)),
+    'certify' => certify($argv[2] ?? '', in_array('--dry-run', $argv, true)),
+    default => fail('usage: bin/parity refresh | check [--allow-incomplete] | certify <report.json> [--dry-run]'),
+};

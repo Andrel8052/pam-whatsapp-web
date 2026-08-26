@@ -1,0 +1,66 @@
+{
+    "name": "pushinbr/pam-whatsapp-web",
+    "description": "Persistent WhatsApp Web client for PHP on PAM, without Node.js or Puppeteer.",
+    "type": "library",
+    "license": "Apache-2.0",
+    "keywords": [
+        "pam",
+        "php",
+        "whatsapp",
+        "whatsapp-web"
+    ],
+    "homepage": "https://github.com/push-in/pam-whatsapp-web",
+    "support": {
+        "issues": "https://github.com/push-in/pam-whatsapp-web/issues",
+        "source": "https://github.com/push-in/pam-whatsapp-web"
+    },
+    "require": {
+        "php": "^8.5",
+        "ext-mbstring": "*",
+        "chillerlan/php-qrcode": "^6.0",
+        "pushinbr/pam-browser": "^1.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Pam\\WhatsApp\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Pam\\WhatsApp\\Tests\\": "tests/Unit/"
+        }
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "archive": {
+        "exclude": [
+            "/.phpstan-cache",
+            "/.phpunit.cache",
+            "/vendor",
+            "/certification-report.json"
+        ]
+    },
+    "scripts": {
+        "analyse": "phpstan analyse --configuration=phpstan.neon --memory-limit=1G",
+        "parity:check": "bin/parity check --allow-incomplete",
+        "parity:gate": "bin/parity check",
+        "parity:refresh": "bin/parity refresh",
+        "upstream:sync": "bin/sync-upstream-bridge",
+        "test": "phpunit --configuration=phpunit.xml",
+        "test:integration": "pam tests/integration/qr.php",
+        "auth:enroll": "pam tests/integration/enroll.php",
+        "test:authenticated": "pam tests/integration/authenticated.php",
+        "test:legacy": "php tests/run.php",
+        "verify": [
+            "@analyse",
+            "@parity:check",
+            "@test",
+            "@test:integration"
+        ]
+    },
+    "require-dev": {
+        "phpstan/phpstan": "^2.1",
+        "phpunit/phpunit": "^11.5"
+    }
+}
