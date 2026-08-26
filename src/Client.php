@@ -30,6 +30,8 @@ use Pam\WhatsApp\Event\QrCodeReceived;
 use Pam\WhatsApp\Event\PairingCodeReceived;
 use Pam\WhatsApp\Event\Ready;
 use Pam\WhatsApp\Exception\BridgeException;
+use Pam\WhatsApp\Exception\ContactNotFoundException;
+use Pam\WhatsApp\Exception\OperationException;
 use Pam\WhatsApp\Support\Payload;
 use Pam\WhatsApp\Support\ChatFactory;
 use Pam\WhatsApp\Support\ContactFactory;
@@ -46,8 +48,19 @@ final class Client
 
     private readonly Session $session;
 
+    private readonly ClientOptions $options;
+
+    private bool $reconnectPending = false;
+
+    private int $reconnectAttempts = 0;
+
+    /** @var array<int, list<callable(MessageAcknowledged): void>> */
+    private array $deliveryListeners = [];
+
     public function __construct(?ClientOptions $options = null)
     {
+        $options ??= new ClientOptions();
+        $this->options = $options;
         $this->session = $options->session ?? BrowserSession::create($options);
         $this->events = new EventDispatcher();
         if ($this->session instanceof BrowserSession) {
@@ -97,6 +110,38 @@ final class Client
         return $this;
     }
 
+    /** @param callable(MessageAcknowledged): void $listener */
+    public function onMessageSent(callable $listener): self
+    {
+        $this->deliveryListeners[DeliveryEventType::Sent->value][] = $listener;
+
+        return $this;
+    }
+
+    /** @param callable(MessageAcknowledged): void $listener */
+    public function onMessageDelivered(callable $listener): self
+    {
+        $this->deliveryListeners[DeliveryEventType::Delivered->value][] = $listener;
+
+        return $this;
+    }
+
+    /** @param callable(MessageAcknowledged): void $listener */
+    public function onMessageRead(callable $listener): self
+    {
+        $this->deliveryListeners[DeliveryEventType::Read->value][] = $listener;
+
+        return $this;
+    }
+
+    /** @param callable(MessageAcknowledged): void $listener */
+    public function onMessageFailed(callable $listener): self
+    {
+        $this->deliveryListeners[DeliveryEventType::Failed->value][] = $listener;
+
+        return $this;
+    }
+
     /** @param callable(object): void $listener */
     public function on(EventType $event, callable $listener): self
     {
@@ -119,10 +164,42 @@ final class Client
                 $this->pupBrowser = $this->session->browser();
                 $this->pupPage = $this->session->currentPage();
             }
+            $this->log(LogLevel::Info, 'WhatsApp client initialized.', []);
         } catch (\Throwable $exception) {
             $this->state = ClientState::Failed;
+            $this->log(LogLevel::Error, 'WhatsApp client initialization failed.', [
+                'error' => $exception->getMessage(),
+            ]);
             throw $exception;
         }
+    }
+
+    public function diagnoseSession(): SessionDiagnostics
+    {
+        $errors = [];
+        $connectionState = null;
+        $webVersion = null;
+        if ($this->state === ClientState::Ready) {
+            try {
+                $connectionState = $this->getState();
+            } catch (\Throwable $exception) {
+                $errors[] = 'Connection state: '.$exception->getMessage();
+            }
+            try {
+                $webVersion = $this->getWWebVersion();
+            } catch (\Throwable $exception) {
+                $errors[] = 'Web version: '.$exception->getMessage();
+            }
+        }
+
+        return new SessionDiagnostics(
+            $this->state,
+            $this->session instanceof BrowserSession ? $this->pupBrowser !== null : true,
+            $connectionState,
+            $webVersion,
+            $this->info?->wid->serialized,
+            $errors,
+        );
     }
 
     public function sendMessage(
@@ -139,9 +216,79 @@ final class Client
             ? ['kind' => ContentKind::Text->value, 'text' => $content]
             : $content->toBridge();
 
-        return new Message(
-            $this->session,
-            $this->session->sendContent($chatId, $payload, $options?->toBridge() ?? []),
+        try {
+            return new Message(
+                $this->session,
+                $this->session->sendContent($chatId, $payload, $options?->toBridge() ?? []),
+            );
+        } catch (\Throwable $exception) {
+            throw new OperationException('sendMessage', $chatId, 1, $exception);
+        }
+    }
+
+    public function sendMessageToNumber(
+        string $phoneNumber,
+        string|MessageContent $content,
+        ?MessageSendOptions $options = null,
+        ?RetryOptions $retry = null,
+    ): Message {
+        $phone = new PhoneNumber($phoneNumber);
+        $retry ??= new RetryOptions();
+        $contact = $this->executeWithRetry(
+            'getNumberId',
+            $phone->digits,
+            $retry,
+            fn (): ?ContactId => $this->getNumberId($phone->digits),
+        );
+        if (!$contact instanceof ContactId) {
+            throw new ContactNotFoundException($phone->digits);
+        }
+
+        return $this->executeWithRetry(
+            'sendMessageToNumber',
+            $contact->serialized,
+            $retry,
+            fn (): Message => $this->sendMessage($contact->serialized, $content, $options),
+        );
+    }
+
+    public function sendImageToNumber(string $phoneNumber, string $filePath, ?string $caption = null): Message
+    {
+        return $this->sendMessageToNumber(
+            $phoneNumber,
+            MessageMedia::fromFilePath($filePath),
+            new MessageSendOptions(caption: $caption),
+        );
+    }
+
+    public function sendAudioToNumber(string $phoneNumber, string $filePath, bool $asVoiceNote = true): Message
+    {
+        return $this->sendMessageToNumber(
+            $phoneNumber,
+            MessageMedia::fromFilePath($filePath),
+            new MessageSendOptions(sendAudioAsVoice: $asVoiceNote),
+        );
+    }
+
+    public function sendDocumentToNumber(string $phoneNumber, string $filePath, ?string $caption = null): Message
+    {
+        return $this->sendMessageToNumber(
+            $phoneNumber,
+            MessageMedia::fromFilePath($filePath),
+            new MessageSendOptions(sendMediaAsDocument: true, caption: $caption),
+        );
+    }
+
+    public function sendStickerToNumber(
+        string $phoneNumber,
+        string $filePath,
+        ?string $name = null,
+        ?string $author = null,
+    ): Message {
+        return $this->sendMessageToNumber(
+            $phoneNumber,
+            MessageMedia::fromFilePath($filePath),
+            new MessageSendOptions(sendMediaAsSticker: true, stickerName: $name, stickerAuthor: $author),
         );
     }
 
@@ -569,7 +716,10 @@ final class Client
 
     public function getNumberId(string $number): ?ContactId
     {
-        $value = $this->session->invoke('getNumberId', [$number]);
+        $normalized = str_ends_with($number, '@c.us')
+            ? substr($number, 0, -5)
+            : (new PhoneNumber($number))->digits;
+        $value = $this->session->invoke('getNumberId', [$normalized]);
         if ($value === null) {
             return null;
         }
@@ -705,6 +855,9 @@ final class Client
 
     public function pump(float $timeoutSeconds = 1.0): bool
     {
+        if ($this->reconnectPending) {
+            return $this->performReconnect();
+        }
         $handled = $this->session->pump($timeoutSeconds);
         if ($this->session instanceof BrowserSession) {
             $this->pupBrowser = $this->session->browser();
@@ -719,6 +872,20 @@ final class Client
         while (!in_array($this->state, [ClientState::Closed, ClientState::Failed], true)) {
             $this->pump(30.0);
         }
+    }
+
+    public function reconnect(): void
+    {
+        if (!$this->session instanceof BrowserSession) {
+            throw new \LogicException('Reconnect requires a browser session.');
+        }
+        if (!in_array($this->state, [ClientState::Closed, ClientState::Failed], true)) {
+            throw new \LogicException('Reconnect is only available after the client disconnects or fails.');
+        }
+
+        $this->reconnectAttempts = 0;
+        $this->reconnectPending = true;
+        $this->state = ClientState::Initializing;
     }
 
     public function close(): void
@@ -742,6 +909,89 @@ final class Client
         }
         $this->session->logout();
         $this->state = ClientState::Closed;
+    }
+
+    /**
+     * @template T
+     * @param callable(): T $operation
+     * @return T
+     */
+    private function executeWithRetry(
+        string $name,
+        ?string $target,
+        RetryOptions $options,
+        callable $operation,
+    ): mixed {
+        $delayMs = $options->initialDelayMs;
+        for ($attempt = 1; $attempt <= $options->maxAttempts; $attempt++) {
+            try {
+                return $operation();
+            } catch (ContactNotFoundException|\InvalidArgumentException $exception) {
+                throw $exception;
+            } catch (\Throwable $exception) {
+                $wrapped = $exception instanceof OperationException
+                    ? new OperationException($name, $target, $attempt, $exception->getPrevious() ?? $exception)
+                    : new OperationException($name, $target, $attempt, $exception);
+                $this->log(LogLevel::Warning, $wrapped->getMessage(), [
+                    'operation' => $name,
+                    'target' => $target,
+                    'attempt' => $attempt,
+                ]);
+                if ($attempt === $options->maxAttempts) {
+                    throw $wrapped;
+                }
+                if ($delayMs > 0) {
+                    usleep($delayMs * 1_000);
+                }
+                $delayMs = min($options->maximumDelayMs, (int) ceil($delayMs * $options->multiplier));
+            }
+        }
+
+        throw new \LogicException('Retry loop ended unexpectedly.');
+    }
+
+    private function performReconnect(): bool
+    {
+        if (!$this->session instanceof BrowserSession) {
+            throw new \LogicException('Reconnect requires a browser session.');
+        }
+        $this->reconnectPending = false;
+        $this->reconnectAttempts++;
+        if ($this->options->reconnectDelayMs > 0) {
+            usleep($this->options->reconnectDelayMs * 1_000);
+        }
+
+        try {
+            $this->session->reconnect($this->handleBridgeEvent(...));
+            $this->reconnectAttempts = 0;
+            $this->log(LogLevel::Info, 'WhatsApp reconnected.', []);
+
+            return true;
+        } catch (\Throwable $exception) {
+            if ($this->reconnectAttempts < $this->options->reconnectMaxAttempts) {
+                $this->reconnectPending = true;
+                $this->log(LogLevel::Warning, 'WhatsApp reconnect attempt failed.', [
+                    'attempt' => $this->reconnectAttempts,
+                    'error' => $exception->getMessage(),
+                ]);
+
+                return false;
+            }
+            $this->state = ClientState::Failed;
+            throw new OperationException('reconnect', null, $this->reconnectAttempts, $exception);
+        }
+    }
+
+    /** @param array<string, mixed> $context */
+    private function log(LogLevel $level, string $message, array $context): void
+    {
+        if ($this->options->logger !== null) {
+            try {
+                ($this->options->logger)($level, $message, $context);
+            } catch (\Throwable) {
+                // Application logging must never break the WhatsApp lifecycle.
+            }
+        }
     }
 
     private function handleBridgeEvent(BridgeEvent $event): void
@@ -873,6 +1123,21 @@ final class Client
         }
         $this->state = ClientState::Closed;
         $this->events->dispatch(EventType::Disconnected, new Disconnected($disconnectionReason));
+        if ($this->reconnectPending) {
+            return;
+        }
+        if ($this->options->autoReconnect
+            && in_array($disconnectionReason, [DisconnectionReason::Conflict, DisconnectionReason::Unlaunched], true)
+            && $this->session instanceof BrowserSession
+        ) {
+            $this->reconnectPending = true;
+            $this->state = ClientState::Initializing;
+            $this->log(LogLevel::Warning, 'WhatsApp disconnected; reconnect scheduled.', [
+                'reason' => $disconnectionReason->value,
+            ]);
+
+            return;
+        }
     }
 
     private function error(BridgeEvent $event): void
@@ -892,7 +1157,20 @@ final class Client
         if (!is_int($ack)) {
             throw new BridgeException('Message acknowledgement must contain an integer ack.');
         }
-        $this->events->dispatch($event->type, new MessageAcknowledged($message, MessageAck::from($ack)));
+        $acknowledged = new MessageAcknowledged($message, MessageAck::from($ack));
+        $this->events->dispatch($event->type, $acknowledged);
+        $derived = match ($acknowledged->ack) {
+            MessageAck::Error => DeliveryEventType::Failed,
+            MessageAck::Server => DeliveryEventType::Sent,
+            MessageAck::Device => DeliveryEventType::Delivered,
+            MessageAck::Read, MessageAck::Played => DeliveryEventType::Read,
+            MessageAck::Pending => null,
+        };
+        if ($derived !== null) {
+            foreach ($this->deliveryListeners[$derived->value] ?? [] as $listener) {
+                $listener($acknowledged);
+            }
+        }
     }
 
     private function messageLifecycle(BridgeEvent $event): void

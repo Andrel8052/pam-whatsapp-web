@@ -269,10 +269,28 @@ final class BrowserSession implements Session
         } catch (JsonException $exception) {
             throw new BridgeException('Unable to encode send-content arguments.', previous: $exception);
         }
-        $value = $this->page()->evaluate(sprintf(
-            'globalThis.PamWhatsApp.sendContent(...%s)',
-            $arguments,
-        ));
+        try {
+            $value = $this->page()->evaluate(sprintf(
+                <<<'JAVASCRIPT'
+(async () => {
+    try {
+        return await globalThis.PamWhatsApp.sendContent(...%s);
+    } catch (error) {
+        const detail = error instanceof Error
+            ? `${error.name}: ${error.message}${error.stack ? `\n${error.stack}` : ''}`
+            : String(error);
+        throw new Error(`PamWhatsApp.sendContent failed: ${detail}`);
+    }
+})()
+JAVASCRIPT,
+                $arguments,
+            ));
+        } catch (\Throwable $exception) {
+            throw new BridgeException(
+                sprintf('Bridge sendContent failed for chat %s: %s', $chatId, $exception->getMessage()),
+                previous: $exception,
+            );
+        }
         if (!is_array($value)) {
             throw new BridgeException('WhatsApp Web returned invalid sent-message data.');
         }
@@ -314,11 +332,29 @@ final class BrowserSession implements Session
             throw new BridgeException('Unable to encode bridge invocation.', previous: $exception);
         }
 
-        return $this->page()->evaluate(sprintf(
-            'globalThis.PamWhatsApp.invoke(%s, %s)',
-            $encodedMethod,
-            $encodedArguments,
-        ));
+        try {
+            return $this->page()->evaluate(sprintf(
+                <<<'JAVASCRIPT'
+(async () => {
+    try {
+        return await globalThis.PamWhatsApp.invoke(%s, %s);
+    } catch (error) {
+        const detail = error instanceof Error
+            ? `${error.name}: ${error.message}${error.stack ? `\n${error.stack}` : ''}`
+            : String(error);
+        throw new Error(`PamWhatsApp.invoke failed: ${detail}`);
+    }
+})()
+JAVASCRIPT,
+                $encodedMethod,
+                $encodedArguments,
+            ));
+        } catch (\Throwable $exception) {
+            throw new BridgeException(
+                sprintf('Bridge invocation %s failed: %s', $method, $exception->getMessage()),
+                previous: $exception,
+            );
+        }
     }
 
     public function close(): void
@@ -356,6 +392,13 @@ final class BrowserSession implements Session
             $this->page = null;
             $this->listener = null;
         }
+    }
+
+    /** @param callable(BridgeEvent): void $listener */
+    public function reconnect(callable $listener): void
+    {
+        $this->restartBrowser();
+        $this->initialize($listener);
     }
 
     private function page(): Page

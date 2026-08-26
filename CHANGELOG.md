@@ -2,6 +2,18 @@
 
 All notable changes to PAM WhatsApp Web will be documented here.
 
+## 1.1.0 - 2026-08-26
+
+- Add normalized unsaved-contact delivery through `sendMessageToNumber()`.
+- Add one-call image, audio, document, and sticker helpers.
+- Add opt-in bounded retries with contextual `OperationException` failures.
+- Add simplified sent, delivered, read, and failed acknowledgement listeners.
+- Add opt-in deferred browser reconnection, explicit reconnect, structured
+  logging, and typed session diagnostics.
+- Preserve all existing APIs and default runtime behavior.
+- Document the exact upstream supported-feature boundary, including deprecated
+  buttons/lists and the upstream communities limitation.
+
 ## 1.0.2 - 2026-08-25
 
 - Add `TerminalQrCode`, a compact half-block renderer that cuts terminal QR

@@ -50,6 +50,11 @@ use Pam\WhatsApp\Event\ContactChanged;
 use Pam\WhatsApp\Event\Disconnected;
 use Pam\WhatsApp\Event\PairingCodeReceived;
 use Pam\WhatsApp\PollVote;
+use Pam\WhatsApp\PhoneNumber;
+use Pam\WhatsApp\RetryOptions;
+use Pam\WhatsApp\ClientOptions;
+use Pam\WhatsApp\LogLevel;
+use Pam\WhatsApp\Exception\ContactNotFoundException;
 use Pam\WhatsApp\Reaction;
 use PHPUnit\Framework\TestCase;
 
@@ -190,6 +195,79 @@ final class ClientTest extends TestCase
 
         self::assertSame(ContentKind::Media->value, $session->lastContent['kind'] ?? null);
         self::assertSame('image/png', $session->lastContent['media']['mimetype'] ?? null);
+    }
+
+    public function testItNormalizesAndSendsToAnUnsavedPhoneNumber(): void
+    {
+        $session = new ClientFakeSession();
+        $client = Client::forSession($session);
+        $client->initialize();
+
+        $message = $client->sendMessageToNumber('+55 (11) 99999-9999', "hello\nworld");
+
+        self::assertSame('5511999999999', (string) new PhoneNumber('+55 (11) 99999-9999'));
+        self::assertSame('5511999999999@c.us', $session->lastChatId);
+        self::assertSame("hello\nworld", $message->body);
+        self::assertSame(['5511999999999'], $session->lastArguments['getNumberId']);
+    }
+
+    public function testPhoneNumberRejectsInvalidInput(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        new PhoneNumber('123');
+    }
+
+    public function testItRetriesTransientSendFailuresAndLogsContext(): void
+    {
+        $session = new ClientFakeSession();
+        $session->sendFailures = 2;
+        $logs = [];
+        $client = new Client(new ClientOptions(
+            session: $session,
+            logger: static function (LogLevel $level, string $message, array $context) use (&$logs): void {
+                $logs[] = [$level, $message, $context];
+            },
+        ));
+        $client->initialize();
+
+        $message = $client->sendMessageToNumber(
+            '55 11 99999-9999',
+            'retried',
+            retry: new RetryOptions(maxAttempts: 3, initialDelayMs: 0),
+        );
+
+        self::assertSame('retried', $message->body);
+        self::assertSame(3, $session->sendAttempts);
+        self::assertCount(2, array_filter(
+            $logs,
+            static fn (array $log): bool => $log[0] === LogLevel::Warning,
+        ));
+    }
+
+    public function testItRejectsNumbersThatAreNotRegistered(): void
+    {
+        $session = new ClientFakeSession();
+        $session->numberExists = false;
+        $client = Client::forSession($session);
+        $client->initialize();
+
+        $this->expectException(ContactNotFoundException::class);
+        $this->expectExceptionMessage('not registered');
+
+        $client->sendMessageToNumber('+55 11 99999-9999', 'hello');
+    }
+
+    public function testItExposesHealthySessionDiagnostics(): void
+    {
+        $client = Client::forSession(new ClientFakeSession());
+        $client->initialize();
+
+        $diagnostics = $client->diagnoseSession();
+
+        self::assertTrue($diagnostics->healthy());
+        self::assertSame('2.3000.0', $diagnostics->webVersion);
+        self::assertSame('me@c.us', $diagnostics->accountId);
     }
 
     public function testItLogsOutAndClosesTheClientState(): void
@@ -353,6 +431,7 @@ final class ClientTest extends TestCase
         $acknowledged = null;
         $created = null;
         $state = null;
+        $read = null;
         $client->on(EventType::MessageAcknowledged, static function (MessageAcknowledged $event) use (&$acknowledged): void {
             $acknowledged = $event;
         });
@@ -361,6 +440,9 @@ final class ClientTest extends TestCase
         });
         $client->on(EventType::StateChanged, static function (ConnectionStateChanged $event) use (&$state): void {
             $state = $event;
+        });
+        $client->onMessageRead(static function (MessageAcknowledged $event) use (&$read): void {
+            $read = $event;
         });
         $client->initialize();
 
@@ -381,6 +463,7 @@ final class ClientTest extends TestCase
 
         self::assertSame('event-message', $acknowledged?->message->id->serialized);
         self::assertSame(5, $acknowledged?->ack->value);
+        self::assertSame('event-message', $read?->message->id->serialized);
         self::assertSame(EventType::MessageCreated, $created?->type);
         self::assertSame('hello', $created?->message->body);
         self::assertSame(ConnectionState::Connected, $state?->state);
@@ -701,8 +784,19 @@ final class ClientFakeSession implements Session
 
     public ?string $quotedMessageId = null;
 
+    public ?string $lastChatId = null;
+
     /** @var array<string, mixed> */
     public array $lastContent = [];
+
+    /** @var array<string, mixed> */
+    public array $lastOptions = [];
+
+    public int $sendFailures = 0;
+
+    public int $sendAttempts = 0;
+
+    public bool $numberExists = true;
 
     public bool $loggedOut = false;
 
@@ -745,6 +839,12 @@ final class ClientFakeSession implements Session
 
     public function sendText(string $chatId, string $body, ?string $quotedMessageId = null): MessageData
     {
+        $this->sendAttempts++;
+        if ($this->sendFailures > 0) {
+            $this->sendFailures--;
+            throw new \RuntimeException('Temporary bridge failure.');
+        }
+        $this->lastChatId = $chatId;
         $this->quotedMessageId = $quotedMessageId;
 
         return new MessageData(
@@ -763,6 +863,7 @@ final class ClientFakeSession implements Session
     public function sendContent(string $chatId, array $content, array $options = []): MessageData
     {
         $this->lastContent = $content;
+        $this->lastOptions = $options;
         $quotedMessageId = is_string($options['quotedMessageId'] ?? null)
             ? $options['quotedMessageId']
             : null;
@@ -1019,11 +1120,11 @@ final class ClientFakeSession implements Session
             ]],
             'muteChat' => ['isMuted' => true, 'muteExpiration' => 2_000_000_000],
             'unmuteChat' => ['isMuted' => false, 'muteExpiration' => 0],
-            'getNumberId' => [
+            'getNumberId' => $this->numberExists ? [
                 'server' => 'c.us',
                 'user' => '5511999999999',
                 '_serialized' => '5511999999999@c.us',
-            ],
+            ] : null,
             'getFormattedNumber' => '+55 11 99999-9999',
             'getCountryCode' => '55',
             'getProfilePicUrl' => 'https://example.com/profile.jpg',

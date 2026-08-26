@@ -37,6 +37,10 @@ final readonly class ClientOptions
         public ?string $webVersion = '2.3000.1017054665',
         public ?WebVersionCacheOptions $webVersionCache = new LocalWebCacheOptions(),
         public ?Session $session = null,
+        public bool $autoReconnect = false,
+        public int $reconnectMaxAttempts = 3,
+        public int $reconnectDelayMs = 1_000,
+        public ?\Closure $logger = null,
     ) {
         if ($browserTimeoutSeconds <= 0.0 || $authenticationTimeoutSeconds <= 0.0) {
             throw new \InvalidArgumentException('Browser and authentication timeouts must be positive.');
@@ -46,6 +50,9 @@ final readonly class ClientOptions
         }
         if ($qrMaxRetries < 0 || $takeoverTimeoutMs < 0) {
             throw new \InvalidArgumentException('QR retries and takeover timeout cannot be negative.');
+        }
+        if ($reconnectMaxAttempts < 1 || $reconnectMaxAttempts > 10 || $reconnectDelayMs < 0) {
+            throw new \InvalidArgumentException('Reconnect attempts or delay are invalid.');
         }
         if ($browserName !== null && !in_array($browserName, ['Chrome', 'Firefox', 'IE', 'Opera', 'Safari', 'Edge'], true)) {
             throw new \InvalidArgumentException('Unsupported linked-device browser name.');
